@@ -362,6 +362,8 @@ msg "$AMARELO" "🔐 Gerando senhas seguras..."
 PASS_PORTAINER=$(gerar_senha 16)
 PASS_MINIO=$(gerar_senha 12)
 PASS_TRAEFIK=$(gerar_senha 14)
+PASS_POSTGRES=$(gerar_senha 16)
+N8N_ENCRYPTION_KEY=$(gerar_senha 32)
 
 ## Define usuários
 USER_PORTAINER="$USUARIO_PADRAO"
@@ -373,6 +375,8 @@ URL_TRAEFIK="traefik.${NOME_INSTANCIA}.${DOMINIO_BASE}"
 URL_PORTAINER="portainer.${NOME_INSTANCIA}.${DOMINIO_BASE}"
 URL_MINIO="minio.${NOME_INSTANCIA}.${DOMINIO_BASE}"
 URL_S3="s3.${NOME_INSTANCIA}.${DOMINIO_BASE}"
+N8N_HOST="n8n.${NOME_INSTANCIA}.${DOMINIO_BASE}"
+N8N_WEBHOOK_HOST="webhook.${NOME_INSTANCIA}.${DOMINIO_BASE}"
 
 ## Resumo das configurações
 echo ""
@@ -387,6 +391,8 @@ msg "$BRANCO" "  • Traefik: $VERDE$URL_TRAEFIK"
 msg "$BRANCO" "  • Portainer: $VERDE$URL_PORTAINER"
 msg "$BRANCO" "  • MinIO: $VERDE$URL_MINIO"
 msg "$BRANCO" "  • S3: $VERDE$URL_S3"
+msg "$BRANCO" "  • N8N Editor: $VERDE$N8N_HOST"
+msg "$BRANCO" "  • N8N Webhook: $VERDE$N8N_WEBHOOK_HOST"
 echo ""
 
 read -p "Confirmar e iniciar instalação? (s/n): " confirmar
@@ -617,6 +623,239 @@ networks:
     external: true
 EOF
 
+## Cria Redis
+cat > docker-compose.redis.yml << EOF
+version: '3.8'
+
+services:
+  redis:
+    image: redis:latest
+    container_name: ${NOME_INSTANCIA}_redis
+    restart: unless-stopped
+    command: [
+        "redis-server",
+        "--appendonly",
+        "yes",
+        "--port",
+        "6379"
+      ]
+    environment:
+      - TZ=America/Sao_Paulo
+    volumes:
+      - redis_data:/data
+      - /etc/localtime:/etc/localtime:ro
+    networks:
+      - ${NOME_INSTANCIA}_network
+    #ports:
+    #  - 6379:6379
+
+volumes:
+  redis_data:
+    external: true
+    name: ${NOME_INSTANCIA}_redis_data
+
+networks:
+  ${NOME_INSTANCIA}_network:
+    external: true
+    name: ${NOME_INSTANCIA}_network
+EOF
+
+## Cria PostgreSQL
+cat > docker-compose.postgres.yml << EOF
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:14
+    container_name: ${NOME_INSTANCIA}_postgres
+    restart: unless-stopped
+    command: >
+      postgres
+      -c max_connections=500
+      -c shared_buffers=512MB
+    environment:
+      - POSTGRES_PASSWORD=${PASS_POSTGRES}
+      - TZ=America/Sao_Paulo
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - /etc/localtime:/etc/localtime:ro
+    networks:
+      - ${NOME_INSTANCIA}_network
+    #ports:
+    #  - 5432:5432
+
+volumes:
+  postgres_data:
+    external: true
+    name: ${NOME_INSTANCIA}_postgres_data
+
+networks:
+  ${NOME_INSTANCIA}_network:
+    external: true
+    name: ${NOME_INSTANCIA}_network
+EOF
+
+## Cria N8N
+cat > docker-compose.n8n.yml << EOF
+version: '3.8'
+
+services:
+  n8n_editor:
+    image: n8nio/n8n:latest
+    container_name: ${NOME_INSTANCIA}_n8n_editor
+    restart: unless-stopped
+    command: start
+    networks:
+      - ${NOME_INSTANCIA}_network
+    environment:
+      - DB_TYPE=postgresdb
+      - DB_POSTGRESDB_DATABASE=n8n_queue
+      - DB_POSTGRESDB_HOST=postgres
+      - DB_POSTGRESDB_PORT=5432
+      - DB_POSTGRESDB_USER=postgres
+      - DB_POSTGRESDB_PASSWORD=${PASS_POSTGRES}
+      - N8N_ENCRYPTION_KEY=${N8N_ENCRYPTION_KEY}
+      - N8N_HOST=${N8N_HOST}
+      - N8N_EDITOR_BASE_URL=https://${N8N_HOST}/
+      - WEBHOOK_URL=https://${N8N_WEBHOOK_HOST}/
+      - N8N_PROTOCOL=https
+      - NODE_ENV=production
+      - EXECUTIONS_MODE=queue
+      - EXECUTIONS_TIMEOUT=3600
+      - EXECUTIONS_TIMEOUT_MAX=7200
+      - OFFLOAD_MANUAL_EXECUTIONS_TO_WORKERS=true
+      - N8N_RUNNERS_ENABLED=true
+      - N8N_RUNNERS_MODE=internal
+      - N8N_REINSTALL_MISSING_PACKAGES=true
+      - N8N_COMMUNITY_PACKAGES_ENABLED=true
+      - N8N_NODE_PATH=/home/node/.n8n/nodes
+      - N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS=true
+      - QUEUE_BULL_REDIS_HOST=redis
+      - QUEUE_BULL_REDIS_PORT=6379
+      - QUEUE_BULL_REDIS_DB=2
+      - N8N_METRICS=true
+      - EXECUTIONS_DATA_PRUNE=true
+      - EXECUTIONS_DATA_MAX_AGE=336
+      - N8N_AI_ENABLED=false
+      - N8N_AI_PROVIDER=openai
+      - N8N_AI_OPENAI_API_KEY=
+      - NODE_FUNCTION_ALLOW_BUILTIN=*
+      - NODE_FUNCTION_ALLOW_EXTERNAL=moment,lodash
+      - GENERIC_TIMEZONE=America/Sao_Paulo
+      - TZ=America/Sao_Paulo
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.n8n_editor.rule=Host(`$N8N_HOST`)
+      - traefik.http.routers.n8n_editor.entrypoints=websecure
+      - traefik.http.routers.n8n_editor.priority=1
+      - traefik.http.routers.n8n_editor.tls.certresolver=letsencryptresolver
+      - traefik.http.routers.n8n_editor.service=n8n_editor
+      - traefik.http.services.n8n_editor.loadbalancer.server.port=5678
+      - traefik.http.services.n8n_editor.loadbalancer.passHostHeader=1
+
+  n8n_webhook:
+    image: n8nio/n8n:latest
+    container_name: ${NOME_INSTANCIA}_n8n_webhook
+    restart: unless-stopped
+    command: webhook
+    networks:
+      - ${NOME_INSTANCIA}_network
+    environment:
+      - DB_TYPE=postgresdb
+      - DB_POSTGRESDB_DATABASE=n8n_queue
+      - DB_POSTGRESDB_HOST=postgres
+      - DB_POSTGRESDB_PORT=5432
+      - DB_POSTGRESDB_USER=postgres
+      - DB_POSTGRESDB_PASSWORD=${PASS_POSTGRES}
+      - N8N_ENCRYPTION_KEY=${N8N_ENCRYPTION_KEY}
+      - N8N_HOST=${N8N_HOST}
+      - N8N_EDITOR_BASE_URL=https://${N8N_HOST}/
+      - WEBHOOK_URL=https://${N8N_WEBHOOK_HOST}/
+      - N8N_PROTOCOL=https
+      - NODE_ENV=production
+      - EXECUTIONS_MODE=queue
+      - EXECUTIONS_TIMEOUT=3600
+      - EXECUTIONS_TIMEOUT_MAX=7200
+      - OFFLOAD_MANUAL_EXECUTIONS_TO_WORKERS=true
+      - N8N_RUNNERS_ENABLED=true
+      - N8N_RUNNERS_MODE=internal
+      - N8N_REINSTALL_MISSING_PACKAGES=true
+      - N8N_COMMUNITY_PACKAGES_ENABLED=true
+      - N8N_NODE_PATH=/home/node/.n8n/nodes
+      - N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS=true
+      - QUEUE_BULL_REDIS_HOST=redis
+      - QUEUE_BULL_REDIS_PORT=6379
+      - QUEUE_BULL_REDIS_DB=2
+      - N8N_METRICS=true
+      - EXECUTIONS_DATA_PRUNE=true
+      - EXECUTIONS_DATA_MAX_AGE=336
+      - N8N_AI_ENABLED=false
+      - N8N_AI_PROVIDER=openai
+      - N8N_AI_OPENAI_API_KEY=
+      - NODE_FUNCTION_ALLOW_BUILTIN=*
+      - NODE_FUNCTION_ALLOW_EXTERNAL=moment,lodash
+      - GENERIC_TIMEZONE=America/Sao_Paulo
+      - TZ=America/Sao_Paulo
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.n8n_webhook.rule=Host(`$N8N_WEBHOOK_HOST`)
+      - traefik.http.routers.n8n_webhook.entrypoints=websecure
+      - traefik.http.routers.n8n_webhook.priority=1
+      - traefik.http.routers.n8n_webhook.tls.certresolver=letsencryptresolver
+      - traefik.http.routers.n8n_webhook.service=n8n_webhook
+      - traefik.http.services.n8n_webhook.loadbalancer.server.port=5678
+      - traefik.http.services.n8n_webhook.loadbalancer.passHostHeader=1
+
+  n8n_worker:
+    image: n8nio/n8n:latest
+    container_name: ${NOME_INSTANCIA}_n8n_worker
+    restart: unless-stopped
+    command: worker --concurrency=10
+    networks:
+      - ${NOME_INSTANCIA}_network
+    environment:
+      - DB_TYPE=postgresdb
+      - DB_POSTGRESDB_DATABASE=n8n_queue
+      - DB_POSTGRESDB_HOST=postgres
+      - DB_POSTGRESDB_PORT=5432
+      - DB_POSTGRESDB_USER=postgres
+      - DB_POSTGRESDB_PASSWORD=${PASS_POSTGRES}
+      - N8N_ENCRYPTION_KEY=${N8N_ENCRYPTION_KEY}
+      - N8N_HOST=${N8N_HOST}
+      - N8N_EDITOR_BASE_URL=https://${N8N_HOST}/
+      - WEBHOOK_URL=https://${N8N_WEBHOOK_HOST}/
+      - N8N_PROTOCOL=https
+      - NODE_ENV=production
+      - EXECUTIONS_MODE=queue
+      - EXECUTIONS_TIMEOUT=3600
+      - EXECUTIONS_TIMEOUT_MAX=7200
+      - OFFLOAD_MANUAL_EXECUTIONS_TO_WORKERS=true
+      - N8N_RUNNERS_ENABLED=true
+      - N8N_RUNNERS_MODE=internal
+      - N8N_REINSTALL_MISSING_PACKAGES=true
+      - N8N_COMMUNITY_PACKAGES_ENABLED=true
+      - N8N_NODE_PATH=/home/node/.n8n/nodes
+      - N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS=true
+      - QUEUE_BULL_REDIS_HOST=redis
+      - QUEUE_BULL_REDIS_PORT=6379
+      - QUEUE_BULL_REDIS_DB=2
+      - N8N_METRICS=true
+      - EXECUTIONS_DATA_PRUNE=true
+      - EXECUTIONS_DATA_MAX_AGE=336
+      - N8N_AI_ENABLED=false
+      - N8N_AI_PROVIDER=openai
+      - N8N_AI_OPENAI_API_KEY=
+      - NODE_FUNCTION_ALLOW_BUILTIN=*
+      - NODE_FUNCTION_ALLOW_EXTERNAL=moment,lodash
+      - GENERIC_TIMEZONE=America/Sao_Paulo
+      - TZ=America/Sao_Paulo
+
+networks:
+  ${NOME_INSTANCIA}_network:
+    external: true
+    name: ${NOME_INSTANCIA}_network
+EOF
+
 msg "$VERDE" "✅ Arquivos docker-compose criados"
 
 
@@ -672,6 +911,17 @@ fi
 # Aguarda Traefik e Portainer ficarem prontos
 sleep 10
 
+# Cria volume Redis
+msg "$AMARELO" "💾 Criando volume Redis..."
+if exec_log "docker volume create ${NOME_INSTANCIA}_redis_data" "Criando volume Redis"; then
+    msg "$VERDE" "✅ Volume Redis criado"
+    log_message "Volume Redis criado com sucesso"
+else
+    msg "$VERMELHO" "❌ Erro ao criar volume Redis"
+    log_message "ERRO: Falha ao criar volume Redis"
+    exit 1
+fi
+
 # Inicia MinIO
 msg "$AMARELO" "💾 Iniciando MinIO..."
 if exec_log "docker compose -f docker-compose.minio.yml up -d" "Deploy do MinIO"; then
@@ -683,6 +933,53 @@ else
     exit 1
 fi
 
+# Inicia Redis
+msg "$AMARELO" "🔴 Iniciando Redis..."
+if exec_log "docker compose -f docker-compose.redis.yml up -d" "Deploy do Redis"; then
+    msg "$VERDE" "✅ Redis iniciado"
+    log_message "Redis iniciado com sucesso"
+else
+    msg "$VERMELHO" "❌ Erro ao iniciar Redis"
+    log_message "ERRO: Falha ao iniciar Redis"
+    exit 1
+fi
+
+# Inicia PostgreSQL
+msg "$AMARELO" "🔴 Iniciando PostgreSQL..."
+if exec_log "docker compose -f docker-compose.postgres.yml up -d" "Deploy do PostgreSQL"; then
+    msg "$VERDE" "✅ PostgreSQL iniciado"
+    log_message "PostgreSQL iniciado com sucesso"
+else
+    msg "$VERMELHO" "❌ Erro ao iniciar PostgreSQL"
+    log_message "ERRO: Falha ao iniciar PostgreSQL"
+    exit 1
+fi
+
+# Aguarda PostgreSQL ficar pronto
+msg "$AMARELO" "⏳ Aguardando PostgreSQL ficar pronto..."
+sleep 15
+
+# Cria banco de dados N8N no PostgreSQL
+msg "$AMARELO" "🗄️ Criando banco de dados N8N..."
+if exec_log "docker exec ${NOME_INSTANCIA}_postgres psql -U postgres -c 'CREATE DATABASE n8n_queue;'" "Criando banco de dados N8N"; then
+    msg "$VERDE" "✅ Banco de dados N8N criado"
+    log_message "Banco de dados N8N criado com sucesso"
+else
+    msg "$AMARELO" "⚠️ Banco de dados N8N já existe ou erro na criação"
+    log_message "Banco de dados N8N já existia ou erro na criação"
+fi
+
+# Inicia N8N
+msg "$AMARELO" "🤖 Iniciando N8N..."
+if exec_log "docker compose -f docker-compose.n8n.yml up -d" "Deploy do N8N"; then
+    msg "$VERDE" "✅ N8N iniciado"
+    log_message "N8N iniciado com sucesso"
+else
+    msg "$VERMELHO" "❌ Erro ao iniciar N8N"
+    log_message "ERRO: Falha ao iniciar N8N"
+    exit 1
+fi
+
 msg "$VERDE" "✅ Todos os serviços iniciados com sucesso"
 
 ## Aguarda containers ficarem prontos
@@ -690,6 +987,11 @@ log_message "Aguardando containers ficarem prontos..."
 aguardar_container "${NOME_INSTANCIA}_traefik"
 aguardar_container "${NOME_INSTANCIA}_portainer"
 aguardar_container "${NOME_INSTANCIA}_minio"
+aguardar_container "${NOME_INSTANCIA}_redis"
+aguardar_container "${NOME_INSTANCIA}_postgres"
+aguardar_container "${NOME_INSTANCIA}_n8n_editor"
+aguardar_container "${NOME_INSTANCIA}_n8n_webhook"
+aguardar_container "${NOME_INSTANCIA}_n8n_worker"
 
 ## ===================================================================================================
 ##                                    CONFIGURAÇÃO DO PORTAINER
@@ -750,6 +1052,8 @@ Traefik Dashboard: https://$URL_TRAEFIK
 Portainer: https://$URL_PORTAINER
 MinIO Console: https://$URL_MINIO
 MinIO S3 API: https://$URL_S3
+N8N Editor: https://$N8N_HOST
+N8N Webhook: https://$N8N_WEBHOOK_HOST
 
 ===================================================
                   CREDENCIAIS
@@ -770,6 +1074,18 @@ MINIO:
   Usuário: $USER_MINIO
   Senha: $PASS_MINIO
 
+POSTGRESQL:
+  Host: localhost
+  Porta: 5432
+  Usuário: postgres
+  Senha: $PASS_POSTGRES
+  Banco N8N: n8n_queue
+
+N8N:
+  Editor: https://$N8N_HOST
+  Webhook: https://$N8N_WEBHOOK_HOST
+  Chave de Criptografia: $N8N_ENCRYPTION_KEY
+
 ===================================================
                 COMANDOS ÚTEIS
 ===================================================
@@ -789,31 +1105,52 @@ Ver logs Portainer:
 Ver logs MinIO:
   docker compose -f docker-compose.minio.yml logs -f
 
+Ver logs Redis:
+  docker compose -f docker-compose.redis.yml logs -f
+
+Ver logs PostgreSQL:
+  docker compose -f docker-compose.postgres.yml logs -f
+
+Ver logs N8N:
+  docker compose -f docker-compose.n8n.yml logs -f
+
 Parar todos os serviços:
-  docker compose -f docker-compose.traefik.yml down
-  docker compose -f docker-compose.portainer.yml down
+  docker compose -f docker-compose.traefik-portainer.yml down
   docker compose -f docker-compose.minio.yml down
+  docker compose -f docker-compose.redis.yml down
+  docker compose -f docker-compose.postgres.yml down
+  docker compose -f docker-compose.n8n.yml down
 
 Reiniciar Traefik:
-  docker compose -f docker-compose.traefik.yml restart
+  docker compose -f docker-compose.traefik-portainer.yml restart traefik
 
 Reiniciar Portainer:
-  docker compose -f docker-compose.portainer.yml restart
+  docker compose -f docker-compose.traefik-portainer.yml restart portainer
 
 Reiniciar MinIO:
   docker compose -f docker-compose.minio.yml restart
 
+Reiniciar Redis:
+  docker compose -f docker-compose.redis.yml restart
+
+Reiniciar PostgreSQL:
+  docker compose -f docker-compose.postgres.yml restart
+
+Reiniciar N8N:
+  docker compose -f docker-compose.n8n.yml restart
+
 Atualizar imagens:
-  docker compose -f docker-compose.traefik.yml pull && docker compose -f docker-compose.traefik.yml up -d
-  docker compose -f docker-compose.portainer.yml pull && docker compose -f docker-compose.portainer.yml up -d
+  docker compose -f docker-compose.traefik-portainer.yml pull && docker compose -f docker-compose.traefik-portainer.yml up -d
   docker compose -f docker-compose.minio.yml pull && docker compose -f docker-compose.minio.yml up -d
+  docker compose -f docker-compose.redis.yml pull && docker compose -f docker-compose.redis.yml up -d
+  docker compose -f docker-compose.postgres.yml pull && docker compose -f docker-compose.postgres.yml up -d
+  docker compose -f docker-compose.n8n.yml pull && docker compose -f docker-compose.n8n.yml up -d
 
 ===================================================
 EOF
 
-## Salva também em /root/dados_vps para backup
-mkdir -p /root/dados_vps
-cp credenciais.txt /root/dados_vps/${NOME_INSTANCIA}_credenciais.txt
+## Credenciais salvas apenas na pasta do cliente
+log_message "Credenciais salvas em: $PROJETO_DIR/credenciais.txt"
 
 ## ===================================================================================================
 ##                                          FINALIZAÇÃO
@@ -854,14 +1191,30 @@ msg "$BRANCO" "  👤 Usuário: $VERDE$USER_MINIO"
 msg "$BRANCO" "  🔑 Senha: $VERMELHO$PASS_MINIO"
 echo ""
 
+msg "$BRANCO" "POSTGRESQL:"
+msg "$BRANCO" "  🗄️ Host: $VERDE localhost"
+msg "$BRANCO" "  🔌 Porta: $VERDE 5432"
+msg "$BRANCO" "  👤 Usuário: $VERDE postgres"
+msg "$BRANCO" "  🔑 Senha: $VERMELHO$PASS_POSTGRES"
+msg "$BRANCO" "  📊 Banco N8N: $VERDE n8n_queue"
+echo ""
+
+msg "$BRANCO" "N8N:"
+msg "$BRANCO" "  🤖 Editor: $VERDE https://$N8N_HOST"
+msg "$BRANCO" "  🔗 Webhook: $VERDE https://$N8N_WEBHOOK_HOST"
+msg "$BRANCO" "  🔐 Chave de Criptografia: $VERMELHO$N8N_ENCRYPTION_KEY"
+echo ""
+
 msg "$AMARELO" "📄 Credenciais salvas em:"
 msg "$BRANCO" "  • $PROJETO_DIR/credenciais.txt"
-msg "$BRANCO" "  • /root/dados_vps/${NOME_INSTANCIA}_credenciais.txt"
 echo ""
 msg "$AMARELO" "📁 Estrutura de diretórios:"
 msg "$BRANCO" "  • $PROJETO_DIR/ - Diretório principal do cliente"
 msg "$BRANCO" "  • $PROJETO_DIR/docker-compose.traefik-portainer.yml"
 msg "$BRANCO" "  • $PROJETO_DIR/docker-compose.minio.yml"
+msg "$BRANCO" "  • $PROJETO_DIR/docker-compose.redis.yml"
+msg "$BRANCO" "  • $PROJETO_DIR/docker-compose.postgres.yml"
+msg "$BRANCO" "  • $PROJETO_DIR/docker-compose.n8n.yml"
 msg "$BRANCO" "  • $PROJETO_DIR/credenciais.txt"
 msg "$BRANCO" "  • $PROJETO_DIR/letsencrypt/ - Certificados SSL"
 echo ""
@@ -869,6 +1222,9 @@ echo ""
 msg "$AMARELO" "=== ARQUIVOS CRIADOS ==="
 msg "$BRANCO" "• docker-compose.traefik-portainer.yml - Traefik + Portainer"
 msg "$BRANCO" "• docker-compose.minio.yml - MinIO"
+msg "$BRANCO" "• docker-compose.redis.yml - Redis"
+msg "$BRANCO" "• docker-compose.postgres.yml - PostgreSQL"
+msg "$BRANCO" "• docker-compose.n8n.yml - N8N (Editor, Webhook, Worker)"
 msg "$BRANCO" "• credenciais.txt - Todas as credenciais"
 echo ""
 msg "$AMARELO" "=== CONFIGURAÇÕES DE SISTEMA ==="
@@ -890,9 +1246,15 @@ msg "$BRANCO" "• Ver status geral: cd $PROJETO_DIR && docker ps"
 msg "$BRANCO" "• Ver logs Traefik: cd $PROJETO_DIR && docker compose -f docker-compose.traefik-portainer.yml logs -f traefik"
 msg "$BRANCO" "• Ver logs Portainer: cd $PROJETO_DIR && docker compose -f docker-compose.traefik-portainer.yml logs -f portainer"
 msg "$BRANCO" "• Ver logs MinIO: cd $PROJETO_DIR && docker compose -f docker-compose.minio.yml logs -f"
+msg "$BRANCO" "• Ver logs Redis: cd $PROJETO_DIR && docker compose -f docker-compose.redis.yml logs -f"
+msg "$BRANCO" "• Ver logs PostgreSQL: cd $PROJETO_DIR && docker compose -f docker-compose.postgres.yml logs -f"
+msg "$BRANCO" "• Ver logs N8N: cd $PROJETO_DIR && docker compose -f docker-compose.n8n.yml logs -f"
 msg "$BRANCO" "• Reiniciar Traefik: cd $PROJETO_DIR && docker compose -f docker-compose.traefik-portainer.yml restart traefik"
 msg "$BRANCO" "• Reiniciar Portainer: cd $PROJETO_DIR && docker compose -f docker-compose.traefik-portainer.yml restart portainer"
 msg "$BRANCO" "• Reiniciar MinIO: cd $PROJETO_DIR && docker compose -f docker-compose.minio.yml restart"
+msg "$BRANCO" "• Reiniciar Redis: cd $PROJETO_DIR && docker compose -f docker-compose.redis.yml restart"
+msg "$BRANCO" "• Reiniciar PostgreSQL: cd $PROJETO_DIR && docker compose -f docker-compose.postgres.yml restart"
+msg "$BRANCO" "• Reiniciar N8N: cd $PROJETO_DIR && docker compose -f docker-compose.n8n.yml restart"
 echo ""
 
 msg "$AMARELO" "╔════════════════════════════════════════════════════════════════╗"
@@ -908,6 +1270,9 @@ log_message "Traefik: https://$URL_TRAEFIK"
 log_message "Portainer: https://$URL_PORTAINER"
 log_message "MinIO: https://$URL_MINIO"
 log_message "S3: https://$URL_S3"
+log_message "N8N Editor: https://$N8N_HOST"
+log_message "N8N Webhook: https://$N8N_WEBHOOK_HOST"
+log_message "PostgreSQL: localhost:5432 (banco: n8n_queue)"
 log_message "Fuso horário configurado: $(timedatectl show --property=Timezone --value)"
 log_message "Sincronização NTP: $(timedatectl show --property=NTPSynchronized --value)"
 log_message "Diretório do projeto: $PROJETO_DIR"
