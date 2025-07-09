@@ -1,0 +1,919 @@
+root@testeportainer:~# cat install.sh 
+#!/bin/bash
+
+## ===================================================================================================
+##                           INSTALADOR DOCKER COMPOSE - NEUROBOOST DIGITAL
+##                              TRAEFIK + PORTAINER + MINIO
+## ===================================================================================================
+
+## Cores
+AMARELO="\e[33m"
+VERDE="\e[32m"
+VERMELHO="\e[31m"
+BRANCO="\e[97m"
+RESET="\e[0m"
+
+## Domínio base
+DOMINIO_BASE="neuroboost.digital"
+
+## Usuário padrão
+USUARIO_PADRAO="neuroboost"
+
+## Arquivo de log
+LOG_FILE="instalacao_$(date +%Y%m%d_%H%M%S).log"
+
+## ===================================================================================================
+##                                    VERIFICAÇÕES DE SISTEMA
+## ===================================================================================================
+
+## Função para verificar requisitos do sistema
+verificar_requisitos_sistema() {
+    local erro=0
+    
+    echo "🔍 Verificando requisitos do sistema..."
+    
+    # Verifica se está executando como root
+    if [ "$EUID" -ne 0 ]; then
+        echo "❌ ERRO: Este script deve ser executado como usuário root!"
+        echo "   Execute: sudo ./Setup"
+        echo "   Usuário atual: $(whoami) (UID: $EUID)"
+        erro=1
+    else
+        echo "✅ Usuário root confirmado (UID: $EUID)"
+    fi
+    
+    # Verifica se é Ubuntu
+    if [ ! -f /etc/os-release ]; then
+        echo "❌ ERRO: Não foi possível identificar o sistema operacional!"
+        erro=1
+    else
+        # Lê informações do sistema
+        . /etc/os-release
+        
+        # Verifica se é Ubuntu
+        if [ "$ID" != "ubuntu" ]; then
+            echo "❌ ERRO: Sistema operacional não suportado!"
+            echo "   Sistema detectado: $PRETTY_NAME"
+            echo "   Sistema requerido: Ubuntu 24.04.2 LTS"
+            erro=1
+        else
+            echo "✅ Ubuntu detectado: $PRETTY_NAME"
+            
+            # Verifica versão específica do Ubuntu
+            if [ "$VERSION_ID" != "24.04" ]; then
+                echo "❌ ERRO: Versão do Ubuntu não suportada!"
+                echo "   Versão detectada: $VERSION_ID ($PRETTY_NAME)"
+                echo "   Versão requerida: 24.04 (Ubuntu 24.04.2 LTS)"
+                erro=1
+            else
+                echo "✅ Versão do Ubuntu compatível: $VERSION_ID"
+                
+                # Verifica se é LTS
+                if [[ "$VERSION" != *"LTS"* ]]; then
+                    echo "❌ ERRO: Esta não é uma versão LTS do Ubuntu!"
+                    echo "   Versão detectada: $VERSION"
+                    echo "   Requerido: Ubuntu 24.04.2 LTS"
+                    erro=1
+                else
+                    echo "✅ Ubuntu LTS confirmado: $VERSION"
+                    
+                    # Verificação adicional para patch version (recomendada)
+                    if command -v lsb_release >/dev/null 2>&1; then
+                        local full_version=$(lsb_release -r -s)
+                        echo "ℹ️  Versão completa detectada: $full_version"
+                        if [ "$full_version" = "24.04" ]; then
+                            echo "✅ Ubuntu 24.04 LTS confirmado"
+                        else
+                            echo "⚠️  Versão patch diferente detectada: $full_version"
+                            echo "   Recomendado: 24.04.2, mas 24.04.x deve funcionar"
+                        fi
+                    fi
+                fi
+            fi
+        fi
+    fi
+    
+    # Se houver erro, interrompe a execução
+    if [ $erro -eq 1 ]; then
+        echo ""
+        echo "╔════════════════════════════════════════════════════════════════╗"
+        echo "║                    REQUISITOS NÃO ATENDIDOS                   ║"
+        echo "╚════════════════════════════════════════════════════════════════╝"
+        echo ""
+        echo "❌ Este script só pode ser executado em:"
+        echo "   • Ubuntu 24.04.2 LTS"
+        echo "   • Como usuário root (sudo)"
+        echo ""
+        echo "🔧 Para corrigir:"
+        echo "   1. Use Ubuntu 24.04.2 LTS"
+        echo "   2. Execute: sudo ./Setup"
+        echo ""
+        exit 1
+    fi
+    
+    echo ""
+    echo "✅ Todos os requisitos de sistema atendidos!"
+    echo ""
+}
+
+## ===================================================================================================
+##                                         FUNÇÕES AUXILIARES
+## ===================================================================================================
+
+## Função para logging
+log_message() {
+    local message="$1"
+    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+    echo "[$timestamp] $message" >> "$LOG_FILE"
+}
+
+## Função para exibir mensagens coloridas e logar
+msg() {
+    local cor=$1
+    local texto=$2
+    local clean_text=$(echo -e "${texto}" | sed 's/\x1b\[[0-9;]*m//g')
+    
+    # Exibe no terminal com cor
+    echo -e "${cor}${texto}${RESET}"
+    
+    # Salva no log sem cor
+    log_message "$clean_text"
+}
+
+## Função para executar comandos e logar
+exec_log() {
+    local cmd="$1"
+    local description="$2"
+    
+    log_message "EXECUTANDO: $cmd"
+    if [ -n "$description" ]; then
+        log_message "DESCRIÇÃO: $description"
+    fi
+    
+    # Executa comando e captura saída
+    local output
+    local exit_code
+    
+    output=$(eval "$cmd" 2>&1)
+    exit_code=$?
+    
+    # Loga a saída
+    if [ -n "$output" ]; then
+        log_message "SAÍDA: $output"
+    fi
+    log_message "CÓDIGO DE SAÍDA: $exit_code"
+    
+    # Retorna o código de saída original
+    return $exit_code
+}
+
+## Função para validar nome da instância
+validar_nome_instancia() {
+    local nome=$1
+    # Remove caracteres especiais e converte para minúsculas
+    nome=$(echo "$nome" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9-]//g')
+    echo "$nome"
+}
+
+## Função para gerar senha segura
+gerar_senha() {
+    local tamanho=$1
+    # Gera senha com letras maiúsculas, minúsculas, números e caracteres especiais
+    senha=$(openssl rand -base64 48 | tr -d "=+/" | cut -c1-$tamanho)
+    # Garante que tenha pelo menos um de cada tipo
+    senha="${senha}A1@"
+    # Embaralha a senha
+    senha=$(echo $senha | fold -w1 | shuf | tr -d '\n' | cut -c1-$tamanho)
+    echo "$senha"
+}
+
+## Função para verificar se Docker está instalado e funcionando
+verificar_docker() {
+    # Verifica se o comando docker existe
+    if ! command -v docker &> /dev/null; then
+        log_message "Docker comando não encontrado"
+        return 1
+    fi
+    
+    # Verifica se o Docker daemon está rodando
+    if ! docker info &> /dev/null; then
+        log_message "Docker daemon não está rodando ou não responde"
+        return 1
+    fi
+    
+    # Testa se consegue executar um comando básico
+    if ! docker ps &> /dev/null; then
+        log_message "Docker ps falhou - problemas de conectividade com daemon"
+        return 1
+    fi
+    
+    log_message "Docker verificado e funcionando corretamente"
+    return 0
+}
+
+## Função para diagnosticar problemas do Docker
+diagnosticar_docker() {
+    msg "$AMARELO" "🔍 Diagnosticando problemas do Docker..."
+    
+    echo "📍 Verificando comando docker:"
+    which docker || echo "❌ Comando docker não encontrado"
+    
+    echo ""
+    echo "📍 Status do serviço Docker:"
+    systemctl status docker --no-pager -l || echo "❌ Erro ao verificar status"
+    
+    echo ""
+    echo "📍 Tentando executar docker version:"
+    docker version || echo "❌ Erro ao executar docker version"
+    
+    echo ""
+    echo "📍 Tentando executar docker info:"
+    docker info || echo "❌ Erro ao executar docker info"
+    
+    echo ""
+    echo "📍 Verificando se o socket existe:"
+    ls -la /var/run/docker.sock || echo "❌ Socket não encontrado"
+}
+
+
+
+
+
+## Função para aguardar container ficar healthy
+aguardar_container() {
+    local container=$1
+    local tentativas=0
+    local max_tentativas=30
+    
+    msg "$AMARELO" "⏳ Aguardando $container ficar online..."
+    log_message "Aguardando container $container ficar online"
+    
+    while [ $tentativas -lt $max_tentativas ]; do
+        if docker ps --filter "name=$container" --filter "status=running" | grep -q "$container"; then
+            msg "$VERDE" "✅ Container $container está online!"
+            log_message "Container $container está online com sucesso"
+            return 0
+        fi
+        sleep 5
+        tentativas=$((tentativas + 1))
+        
+        # Mostra progresso a cada 6 tentativas (30 segundos)
+        if [ $((tentativas % 6)) -eq 0 ]; then
+            msg "$AMARELO" "⏳ Ainda aguardando $container... ($tentativas/$max_tentativas)"
+            log_message "Aguardando container $container... ($tentativas/$max_tentativas)"
+        fi
+    done
+    
+    msg "$VERMELHO" "❌ Timeout aguardando $container"
+    log_message "ERRO: Timeout aguardando container $container"
+    msg "$AMARELO" "🔍 Status do container:"
+    
+    # Captura status do container para o log
+    container_status=$(docker ps -a --filter "name=$container" 2>&1)
+    log_message "Status do container $container: $container_status"
+    docker ps -a --filter "name=$container" || echo "❌ Erro ao verificar container"
+    
+    if docker ps -a --filter "name=$container" | grep -q "$container"; then
+        msg "$AMARELO" "📝 Logs do container:"
+        container_logs=$(docker logs --tail 20 "$container" 2>&1)
+        log_message "Logs do container $container: $container_logs"
+        docker logs --tail 20 "$container" || echo "❌ Erro ao obter logs"
+    fi
+    return 1
+}
+
+## ===================================================================================================
+##                                         COLETA DE INFORMAÇÕES
+## ===================================================================================================
+
+## ===================================================================================================
+##                                    VERIFICAÇÃO DE REQUISITOS
+## ===================================================================================================
+
+# Verifica requisitos ANTES de inicializar qualquer coisa
+verificar_requisitos_sistema
+
+## ===================================================================================================
+##                                       INICIALIZAÇÃO DO LOG
+## ===================================================================================================
+
+# Inicializa o arquivo de log
+log_message "=========================================="
+log_message "INÍCIO DA INSTALAÇÃO - NEUROBOOST DIGITAL"
+log_message "=========================================="
+log_message "Data/Hora: $(date)"
+log_message "Usuário: $(whoami)"
+log_message "Diretório: $(pwd)"
+log_message "Sistema: $(uname -a)"
+log_message "Arquivo de log: $LOG_FILE"
+log_message "Requisitos de sistema verificados e aprovados"
+
+clear
+msg "$BRANCO" "
+███╗   ██╗███████╗██╗   ██╗██████╗  ██████╗ ██████╗  ██████╗  ██████╗ ███████╗████████╗
+████╗  ██║██╔════╝██║   ██║██╔══██╗██╔═══██╗██╔══██╗██╔═══██╗██╔═══██╗██╔════╝╚══██╔══╝
+██╔██╗ ██║█████╗  ██║   ██║██████╔╝██║   ██║██████╔╝██║   ██║██║   ██║███████╗   ██║   
+██║╚██╗██║██╔══╝  ██║   ██║██╔══██╗██║   ██║██╔══██╗██║   ██║██║   ██║╚════██║   ██║   
+██║ ╚████║███████╗╚██████╔╝██║  ██║╚██████╔╝██████╔╝╚██████╔╝╚██████╔╝███████║   ██║   
+╚═╝  ╚═══╝╚══════╝ ╚═════╝ ╚═╝  ╚═╝ ╚═════╝ ╚═════╝  ╚═════╝  ╚═════╝ ╚══════╝   ╚═╝   
+
+        INSTALADOR DOCKER COMPOSE - TRAEFIK + PORTAINER + MINIO
+"
+
+msg "$VERDE" "✅ Sistema compatível: Ubuntu 24.04 LTS como root"
+msg "$AMARELO" "📝 Log da instalação: $LOG_FILE"
+
+msg "$AMARELO" "=== CONFIGURAÇÃO INICIAL ==="
+echo ""
+
+## Nome da instância
+while true; do
+    msg "$BRANCO" "Digite o nome da instância (ex: cliente1, empresa2):"
+    msg "$AMARELO" "➤ Este nome será usado como subdomínio para todas as aplicações"
+    read -p "> " nome_instancia_raw
+    
+    NOME_INSTANCIA=$(validar_nome_instancia "$nome_instancia_raw")
+    
+    if [ -z "$NOME_INSTANCIA" ]; then
+        msg "$VERMELHO" "❌ Nome inválido! Use apenas letras, números e hífens."
+        continue
+    fi
+    
+    msg "$VERDE" "✓ Nome da instância: $NOME_INSTANCIA"
+    break
+done
+
+## Email para certificados SSL
+echo ""
+while true; do
+    msg "$BRANCO" "Digite seu email (para notificações SSL):"
+    read -p "> " EMAIL_SSL
+    
+    if [[ "$EMAIL_SSL" =~ ^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$ ]]; then
+        msg "$VERDE" "✓ Email: $EMAIL_SSL"
+        break
+    else
+        msg "$VERMELHO" "❌ Email inválido!"
+    fi
+done
+
+## Gera senhas automaticamente
+msg "$AMARELO" ""
+msg "$AMARELO" "🔐 Gerando senhas seguras..."
+PASS_PORTAINER=$(gerar_senha 16)
+PASS_MINIO=$(gerar_senha 12)
+PASS_TRAEFIK=$(gerar_senha 14)
+
+## Define usuários
+USER_PORTAINER="$USUARIO_PADRAO"
+USER_MINIO="$USUARIO_PADRAO"
+USER_TRAEFIK="$USUARIO_PADRAO"
+
+## Define URLs automáticas
+URL_TRAEFIK="traefik.${NOME_INSTANCIA}.${DOMINIO_BASE}"
+URL_PORTAINER="portainer.${NOME_INSTANCIA}.${DOMINIO_BASE}"
+URL_MINIO="minio.${NOME_INSTANCIA}.${DOMINIO_BASE}"
+URL_S3="s3.${NOME_INSTANCIA}.${DOMINIO_BASE}"
+
+## Resumo das configurações
+echo ""
+msg "$AMARELO" "=== RESUMO DAS CONFIGURAÇÕES ==="
+msg "$BRANCO" "Nome da Instância: $VERDE$NOME_INSTANCIA"
+msg "$BRANCO" "Email SSL: $VERDE$EMAIL_SSL"
+msg "$BRANCO" "Usuário padrão: $VERDE$USUARIO_PADRAO"
+msg "$BRANCO" "Fuso horário: $VERDE$(timedatectl show --property=Timezone --value)"
+echo ""
+msg "$BRANCO" "URLs que serão criadas:"
+msg "$BRANCO" "  • Traefik: $VERDE$URL_TRAEFIK"
+msg "$BRANCO" "  • Portainer: $VERDE$URL_PORTAINER"
+msg "$BRANCO" "  • MinIO: $VERDE$URL_MINIO"
+msg "$BRANCO" "  • S3: $VERDE$URL_S3"
+echo ""
+
+read -p "Confirmar e iniciar instalação? (s/n): " confirmar
+if [[ ! "$confirmar" =~ ^[Ss]$ ]]; then
+    msg "$VERMELHO" "Instalação cancelada."
+    exit 1
+fi
+
+## ===================================================================================================
+##                                    PREPARAÇÃO DO SISTEMA
+## ===================================================================================================
+
+clear
+msg "$AMARELO" "=== PREPARANDO SISTEMA ==="
+echo ""
+
+## Atualiza sistema
+msg "$BRANCO" "📦 Atualizando sistema..."
+exec_log "apt-get update -qq" "Atualizando lista de pacotes"
+exec_log "apt-get install -y -qq curl jq openssl apache2-utils tzdata ntp" "Instalando dependências básicas e ferramentas de tempo"
+msg "$VERDE" "✅ Sistema atualizado"
+
+## Configura fuso horário para Brasília
+msg "$BRANCO" "🕐 Configurando fuso horário para Brasília..."
+exec_log "timedatectl set-timezone America/Sao_Paulo" "Definindo fuso horário para Brasília"
+exec_log "timedatectl set-ntp true" "Habilitando sincronização automática de tempo"
+exec_log "systemctl enable systemd-timesyncd" "Habilitando serviço de sincronização de tempo"
+exec_log "systemctl start systemd-timesyncd" "Iniciando serviço de sincronização de tempo"
+
+# Aguarda sincronização
+msg "$AMARELO" "⏳ Aguardando sincronização de tempo..."
+sleep 5
+
+# Verifica configuração
+current_time=$(date)
+current_tz=$(timedatectl show --property=Timezone --value)
+msg "$VERDE" "✅ Fuso horário configurado: $current_tz"
+msg "$VERDE" "✅ Horário atual: $current_time"
+log_message "Fuso horário configurado: $current_tz"
+log_message "Horário atual: $current_time"
+
+## Instala Docker se necessário
+if ! verificar_docker; then
+    msg "$BRANCO" "🐳 Instalando Docker..."
+    
+    # Instala Docker
+    exec_log "curl -fsSL https://get.docker.com | bash" "Baixando e instalando Docker"
+    
+    # Habilita e inicia o serviço Docker
+    exec_log "systemctl enable docker" "Habilitando serviço Docker"
+    exec_log "systemctl start docker" "Iniciando serviço Docker"
+    
+    # Como o script executa como root, não é necessário adicionar ao grupo docker
+    log_message "Executando como root - não precisa adicionar ao grupo docker"
+    
+    # Atualiza PATH e recarrega comandos
+    export PATH="/usr/bin:/usr/local/bin:$PATH"
+    hash -r
+    log_message "PATH atualizado: $PATH"
+    
+    # Aguarda o Docker inicializar completamente
+    msg "$AMARELO" "⏳ Aguardando Docker inicializar..."
+    sleep 5
+    
+    # Força restart do Docker daemon
+    exec_log "systemctl restart docker" "Reiniciando Docker daemon"
+    sleep 10
+    
+    # Verifica múltiplas vezes se Docker está funcionando
+    tentativas=0
+    max_tentativas=6
+    while [ $tentativas -lt $max_tentativas ]; do
+        log_message "Tentativa $((tentativas+1))/$max_tentativas de verificação do Docker"
+        if verificar_docker; then
+            msg "$VERDE" "✅ Docker instalado e funcionando"
+            log_message "Docker verificado e funcionando corretamente"
+            break
+        fi
+        msg "$AMARELO" "⏳ Aguardando Docker inicializar... (tentativa $((tentativas+1))/$max_tentativas)"
+        sleep 10
+        tentativas=$((tentativas + 1))
+    done
+    
+    # Verificação final
+    if ! verificar_docker; then
+        msg "$VERMELHO" "❌ Erro: Docker não está funcionando após instalação"
+        log_message "ERRO: Docker não funcionou após instalação"
+        echo ""
+        diagnosticar_docker
+        echo ""
+        msg "$AMARELO" "ℹ️  Tente executar: systemctl restart docker && systemctl status docker"
+        exit 1
+    fi
+else
+    msg "$VERDE" "✅ Docker já está instalado e funcionando"
+    log_message "Docker já estava instalado e funcionando"
+fi
+
+## Cria diretório do projeto
+PROJETO_DIR="/opt/${NOME_INSTANCIA}"
+mkdir -p "$PROJETO_DIR"
+cd "$PROJETO_DIR"
+
+## Gera hash da senha do Traefik para Basic Auth
+TRAEFIK_AUTH=$(htpasswd -nb $USER_TRAEFIK $PASS_TRAEFIK | sed -e 's/\$/\$\$/g')
+
+## ===================================================================================================
+##                                 CRIAÇÃO DO DOCKER-COMPOSE.YML
+## ===================================================================================================
+
+msg "$AMARELO" ""
+msg "$AMARELO" "=== CRIANDO CONFIGURAÇÕES ==="
+echo ""
+
+## Cria docker-compose.yml com todos os serviços
+## Cria arquivos docker-compose temporários
+msg "$BRANCO" "📝 Criando arquivos docker-compose temporários..."
+
+## Cria Traefik + Portainer juntos
+cat > docker-compose.traefik-portainer.yml << EOF
+version: '3.8'
+
+services:
+  traefik:
+    image: traefik:v3.4.0
+    container_name: ${NOME_INSTANCIA}_traefik
+    restart: unless-stopped
+    environment:
+      - TZ=America/Sao_Paulo
+    command:
+      - "--api.dashboard=true"
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.web.http.redirections.entryPoint.to=websecure"
+      - "--entrypoints.web.http.redirections.entryPoint.scheme=https"
+      - "--entrypoints.websecure.address=:443"
+      - "--certificatesresolvers.letsencryptresolver.acme.httpchallenge=true"
+      - "--certificatesresolvers.letsencryptresolver.acme.httpchallenge.entrypoint=web"
+      - "--certificatesresolvers.letsencryptresolver.acme.storage=/letsencrypt/acme.json"
+      - "--certificatesresolvers.letsencryptresolver.acme.email=${EMAIL_SSL}"
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - "/var/run/docker.sock:/var/run/docker.sock:ro"
+      - "./letsencrypt:/letsencrypt"
+      - "/etc/localtime:/etc/localtime:ro"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.traefik.rule=Host(\`${URL_TRAEFIK}\`)"
+      - "traefik.http.routers.traefik.entrypoints=websecure"
+      - "traefik.http.routers.traefik.tls.certresolver=letsencryptresolver"
+      - "traefik.http.routers.traefik.service=api@internal"
+      - "traefik.http.routers.traefik.middlewares=auth"
+      - "traefik.http.middlewares.auth.basicauth.users=${TRAEFIK_AUTH}"
+    networks:
+      - ${NOME_INSTANCIA}_network
+
+  portainer:
+    image: portainer/portainer-ce:latest
+    container_name: ${NOME_INSTANCIA}_portainer
+    restart: unless-stopped
+    environment:
+      - TZ=America/Sao_Paulo
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - portainer_data:/data
+      - /etc/localtime:/etc/localtime:ro
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.portainer.rule=Host(\`${URL_PORTAINER}\`)"
+      - "traefik.http.routers.portainer.entrypoints=websecure"
+      - "traefik.http.routers.portainer.tls.certresolver=letsencryptresolver"
+      - "traefik.http.services.portainer.loadbalancer.server.port=9000"
+    networks:
+      - ${NOME_INSTANCIA}_network
+
+volumes:
+  portainer_data:
+
+networks:
+  ${NOME_INSTANCIA}_network:
+    external: true
+EOF
+
+## Cria MinIO
+cat > docker-compose.minio.yml << EOF
+version: '3.8'
+
+services:
+  minio:
+    image: quay.io/minio/minio:latest
+    container_name: ${NOME_INSTANCIA}_minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      - TZ=America/Sao_Paulo
+      - MINIO_ROOT_USER=${USER_MINIO}
+      - MINIO_ROOT_PASSWORD=${PASS_MINIO}
+      - MINIO_BROWSER_REDIRECT_URL=https://${URL_MINIO}
+      - MINIO_SERVER_URL=https://${URL_S3}
+    volumes:
+      - minio_data:/data
+      - /etc/localtime:/etc/localtime:ro
+    labels:
+      - "traefik.enable=true"
+      # Console do MinIO (porta 9001)
+      - "traefik.http.routers.minio-console.rule=Host(\`${URL_MINIO}\`)"
+      - "traefik.http.routers.minio-console.entrypoints=websecure"
+      - "traefik.http.routers.minio-console.tls.certresolver=letsencryptresolver"
+      - "traefik.http.routers.minio-console.service=minio-console-svc"
+      - "traefik.http.services.minio-console-svc.loadbalancer.server.port=9001"
+      # API S3 (porta 9000)
+      - "traefik.http.routers.minio-api.rule=Host(\`${URL_S3}\`)"
+      - "traefik.http.routers.minio-api.entrypoints=websecure"
+      - "traefik.http.routers.minio-api.tls.certresolver=letsencryptresolver"
+      - "traefik.http.routers.minio-api.service=minio-api-svc"
+      - "traefik.http.services.minio-api-svc.loadbalancer.server.port=9000"
+    networks:
+      - ${NOME_INSTANCIA}_network
+
+volumes:
+  minio_data:
+
+networks:
+  ${NOME_INSTANCIA}_network:
+    external: true
+EOF
+
+msg "$VERDE" "✅ Arquivos docker-compose temporários criados"
+
+
+
+## ===================================================================================================
+##                                    INICIANDO CONTAINERS
+## ===================================================================================================
+
+msg "$AMARELO" ""
+msg "$AMARELO" "=== INICIANDO TODOS OS SERVIÇOS ==="
+echo ""
+
+## Cria diretório para certificados
+mkdir -p letsencrypt
+
+## Verifica se Docker está funcionando antes de iniciar containers
+if ! verificar_docker; then
+    msg "$VERMELHO" "❌ Docker não está funcionando corretamente"
+    diagnosticar_docker
+    exit 1
+fi
+
+## Cria rede compartilhada se não existir
+msg "$BRANCO" "🌐 Verificando rede compartilhada..."
+if docker network ls --format '{{.Name}}' | grep -q "^${NOME_INSTANCIA}_network$"; then
+    msg "$VERDE" "✅ Rede ${NOME_INSTANCIA}_network já existe"
+    log_message "Rede ${NOME_INSTANCIA}_network já existia"
+else
+    if exec_log "docker network create --driver bridge ${NOME_INSTANCIA}_network" "Criando rede compartilhada"; then
+        msg "$VERDE" "✅ Rede compartilhada criada"
+        log_message "Rede compartilhada criada com sucesso"
+    else
+        msg "$VERMELHO" "❌ Erro ao criar rede"
+        log_message "ERRO: Falha ao criar rede compartilhada"
+        exit 1
+    fi
+fi
+
+## Inicia todos os serviços
+msg "$BRANCO" "🚀 Iniciando Traefik, Portainer e MinIO..."
+
+# Inicia Traefik + Portainer juntos
+msg "$AMARELO" "📡 Iniciando Traefik e Portainer..."
+if exec_log "docker compose -f docker-compose.traefik-portainer.yml up -d" "Deploy do Traefik e Portainer"; then
+    msg "$VERDE" "✅ Traefik e Portainer iniciados"
+    log_message "Traefik e Portainer iniciados com sucesso"
+else
+    msg "$VERMELHO" "❌ Erro ao iniciar Traefik e Portainer"
+    log_message "ERRO: Falha ao iniciar Traefik e Portainer"
+    exit 1
+fi
+
+# Aguarda Traefik e Portainer ficarem prontos
+sleep 10
+
+# Inicia MinIO
+msg "$AMARELO" "💾 Iniciando MinIO..."
+if exec_log "docker compose -f docker-compose.minio.yml up -d" "Deploy do MinIO"; then
+    msg "$VERDE" "✅ MinIO iniciado"
+    log_message "MinIO iniciado com sucesso"
+else
+    msg "$VERMELHO" "❌ Erro ao iniciar MinIO"
+    log_message "ERRO: Falha ao iniciar MinIO"
+    exit 1
+fi
+
+msg "$VERDE" "✅ Todos os serviços iniciados com sucesso"
+
+## Aguarda containers ficarem prontos
+log_message "Aguardando containers ficarem prontos..."
+aguardar_container "${NOME_INSTANCIA}_traefik"
+aguardar_container "${NOME_INSTANCIA}_portainer"
+aguardar_container "${NOME_INSTANCIA}_minio"
+
+## ===================================================================================================
+##                                    CONFIGURAÇÃO DO PORTAINER
+## ===================================================================================================
+
+msg "$AMARELO" ""
+msg "$AMARELO" "=== CONFIGURANDO PORTAINER ==="
+echo ""
+
+sleep 20
+msg "$BRANCO" "👤 Configurando conta do Portainer..."
+log_message "Configurando conta do Portainer via API"
+
+CURL_CMD="curl -k -s -X POST \"https://$URL_PORTAINER/api/users/admin/init\" -H \"Content-Type: application/json\" -d \"{\\\"Username\\\": \\\"$USER_PORTAINER\\\", \\\"Password\\\": \\\"$PASS_PORTAINER\\\"}\""
+log_message "Executando: $CURL_CMD"
+
+RESPONSE=$(curl -k -s -X POST "https://$URL_PORTAINER/api/users/admin/init" \
+    -H "Content-Type: application/json" \
+    -d "{\"Username\": \"$USER_PORTAINER\", \"Password\": \"$PASS_PORTAINER\"}")
+
+log_message "Resposta da API do Portainer: $RESPONSE"
+
+if echo "$RESPONSE" | grep -q "\"Username\":\"$USER_PORTAINER\""; then
+    msg "$VERDE" "✅ Conta do Portainer criada com sucesso!"
+    log_message "Conta do Portainer criada com sucesso"
+elif echo "$RESPONSE" | grep -q "\"message\":\"User already exists\""; then
+    msg "$VERDE" "✅ Conta do Portainer já existe!"
+    log_message "Conta do Portainer já existia"
+elif echo "$RESPONSE" | grep -q "\"Id\".*\"Username\""; then
+    msg "$VERDE" "✅ Conta do Portainer configurada!"
+    log_message "Conta do Portainer configurada com sucesso"
+else
+    msg "$AMARELO" "⚠️  Não foi possível criar a conta automaticamente"
+    msg "$AMARELO" "ℹ️  Acesse o Portainer em até 5 minutos para criar a conta!"
+    log_message "AVISO: Não foi possível criar conta do Portainer automaticamente"
+fi
+
+## ===================================================================================================
+##                                      SALVANDO CONFIGURAÇÕES
+## ===================================================================================================
+
+## Salva informações em arquivo
+cat > credenciais.txt << EOF
+===================================================
+         CREDENCIAIS E INFORMAÇÕES DE ACESSO
+              NEUROBOOST DIGITAL
+===================================================
+
+Data da Instalação: $(date)
+Nome da Instância: $NOME_INSTANCIA
+Diretório do Projeto: $PROJETO_DIR
+
+===================================================
+                 URLs DE ACESSO
+===================================================
+
+Traefik Dashboard: https://$URL_TRAEFIK
+Portainer: https://$URL_PORTAINER
+MinIO Console: https://$URL_MINIO
+MinIO S3 API: https://$URL_S3
+
+===================================================
+                  CREDENCIAIS
+===================================================
+
+TRAEFIK DASHBOARD:
+  URL: https://$URL_TRAEFIK
+  Usuário: $USER_TRAEFIK
+  Senha: $PASS_TRAEFIK
+
+PORTAINER:
+  URL: https://$URL_PORTAINER
+  Usuário: $USER_PORTAINER
+  Senha: $PASS_PORTAINER
+
+MINIO:
+  URL: https://$URL_MINIO
+  Usuário: $USER_MINIO
+  Senha: $PASS_MINIO
+
+===================================================
+                COMANDOS ÚTEIS
+===================================================
+
+Entrar no diretório:
+  cd $PROJETO_DIR
+
+Ver status dos containers:
+  docker ps
+
+Ver logs Traefik:
+  docker compose -f docker-compose.traefik.yml logs -f
+
+Ver logs Portainer:
+  docker compose -f docker-compose.portainer.yml logs -f
+
+Ver logs MinIO:
+  docker compose -f docker-compose.minio.yml logs -f
+
+Parar todos os serviços:
+  docker compose -f docker-compose.traefik.yml down
+  docker compose -f docker-compose.portainer.yml down
+  docker compose -f docker-compose.minio.yml down
+
+Reiniciar Traefik:
+  docker compose -f docker-compose.traefik.yml restart
+
+Reiniciar Portainer:
+  docker compose -f docker-compose.portainer.yml restart
+
+Reiniciar MinIO:
+  docker compose -f docker-compose.minio.yml restart
+
+Atualizar imagens:
+  docker compose -f docker-compose.traefik.yml pull && docker compose -f docker-compose.traefik.yml up -d
+  docker compose -f docker-compose.portainer.yml pull && docker compose -f docker-compose.portainer.yml up -d
+  docker compose -f docker-compose.minio.yml pull && docker compose -f docker-compose.minio.yml up -d
+
+===================================================
+EOF
+
+## Salva também em /root para backup
+mkdir -p /root/dados_vps
+cp credenciais.txt /root/dados_vps/${NOME_INSTANCIA}_credenciais.txt
+
+## ===================================================================================================
+##                                          FINALIZAÇÃO
+## ===================================================================================================
+
+clear
+msg "$VERDE" "
+╔════════════════════════════════════════════════════════════════╗
+║           ✅ INSTALAÇÃO CONCLUÍDA COM SUCESSO!                 ║
+╚════════════════════════════════════════════════════════════════╝
+"
+
+msg "$AMARELO" "=== INFORMAÇÕES IMPORTANTES - GUARDE ESTAS CREDENCIAIS ==="
+echo ""
+
+msg "$BRANCO" "📂 Diretório do projeto: $VERDE$PROJETO_DIR"
+echo ""
+
+msg "$AMARELO" "🔐 CREDENCIAIS DE ACESSO:"
+echo ""
+
+msg "$BRANCO" "TRAEFIK DASHBOARD:"
+msg "$BRANCO" "  🌐 URL: $VERDE https://$URL_TRAEFIK"
+msg "$BRANCO" "  👤 Usuário: $VERDE$USER_TRAEFIK"
+msg "$BRANCO" "  🔑 Senha: $VERMELHO$PASS_TRAEFIK"
+echo ""
+
+msg "$BRANCO" "PORTAINER:"
+msg "$BRANCO" "  🌐 URL: $VERDE https://$URL_PORTAINER"
+msg "$BRANCO" "  👤 Usuário: $VERDE$USER_PORTAINER"
+msg "$BRANCO" "  🔑 Senha: $VERMELHO$PASS_PORTAINER"
+echo ""
+
+msg "$BRANCO" "MINIO:"
+msg "$BRANCO" "  🌐 Console: $VERDE https://$URL_MINIO"
+msg "$BRANCO" "  🌐 S3 API: $VERDE https://$URL_S3"
+msg "$BRANCO" "  👤 Usuário: $VERDE$USER_MINIO"
+msg "$BRANCO" "  🔑 Senha: $VERMELHO$PASS_MINIO"
+echo ""
+
+msg "$AMARELO" "📄 Credenciais salvas em:"
+msg "$BRANCO" "  • $PROJETO_DIR/credenciais.txt"
+msg "$BRANCO" "  • /root/dados_vps/${NOME_INSTANCIA}_credenciais.txt"
+echo ""
+
+msg "$AMARELO" "=== ARQUIVOS CRIADOS ==="
+msg "$BRANCO" "• docker-compose.network.yml - Rede compartilhada"
+msg "$BRANCO" "• docker-compose.traefik.yml - Proxy reverso Traefik"
+msg "$BRANCO" "• docker-compose.portainer.yml - Gerenciamento Docker"
+msg "$BRANCO" "• docker-compose.minio.yml - Armazenamento de objetos"
+msg "$BRANCO" "• credenciais.txt - Todas as credenciais"
+echo ""
+msg "$AMARELO" "=== CONFIGURAÇÕES DE SISTEMA ==="
+msg "$BRANCO" "• Fuso horário: $(timedatectl show --property=Timezone --value)"
+msg "$BRANCO" "• Sincronização NTP: $(timedatectl show --property=NTPSynchronized --value)"
+msg "$BRANCO" "• Horário atual: $(date)"
+echo ""
+
+msg "$AMARELO" "=== PRÓXIMAS APLICAÇÕES ==="
+msg "$BRANCO" "Para adicionar novas aplicações:"
+msg "$BRANCO" "1. Crie um novo arquivo docker-compose.app.yml"
+msg "$BRANCO" "2. Use o padrão de URL: app.$NOME_INSTANCIA.$DOMINIO_BASE"
+msg "$BRANCO" "3. Conecte à rede: ${NOME_INSTANCIA}_network"
+msg "$BRANCO" "4. Execute: docker compose -f docker-compose.app.yml up -d"
+echo ""
+
+msg "$AMARELO" "=== COMANDOS ÚTEIS ==="
+msg "$BRANCO" "• Ver status geral: cd $PROJETO_DIR && docker ps"
+msg "$BRANCO" "• Ver logs Traefik: cd $PROJETO_DIR && docker compose -f docker-compose.traefik.yml logs -f"
+msg "$BRANCO" "• Ver logs Portainer: cd $PROJETO_DIR && docker compose -f docker-compose.portainer.yml logs -f"
+msg "$BRANCO" "• Ver logs MinIO: cd $PROJETO_DIR && docker compose -f docker-compose.minio.yml logs -f"
+msg "$BRANCO" "• Reiniciar Traefik: cd $PROJETO_DIR && docker compose -f docker-compose.traefik.yml restart"
+msg "$BRANCO" "• Reiniciar Portainer: cd $PROJETO_DIR && docker compose -f docker-compose.portainer.yml restart"
+msg "$BRANCO" "• Reiniciar MinIO: cd $PROJETO_DIR && docker compose -f docker-compose.minio.yml restart"
+echo ""
+
+msg "$AMARELO" "╔════════════════════════════════════════════════════════════════╗"
+msg "$AMARELO" "║        NEUROBOOST DIGITAL - Automação e IA                     ║"
+msg "$AMARELO" "╚════════════════════════════════════════════════════════════════╝"
+
+## Finaliza o log
+log_message "=========================================="
+log_message "INSTALAÇÃO CONCLUÍDA COM SUCESSO"
+log_message "=========================================="
+log_message "Nome da instância: $NOME_INSTANCIA"
+log_message "Traefik: https://$URL_TRAEFIK"
+log_message "Portainer: https://$URL_PORTAINER"
+log_message "MinIO: https://$URL_MINIO"
+log_message "S3: https://$URL_S3"
+log_message "Fuso horário configurado: $(timedatectl show --property=Timezone --value)"
+log_message "Sincronização NTP: $(timedatectl show --property=NTPSynchronized --value)"
+log_message "Credenciais salvas em: $PROJETO_DIR/credenciais.txt"
+log_message "Log da instalação: $LOG_FILE"
+log_message "Data/Hora de conclusão: $(date)"
+log_message "=========================================="
+
+msg "$AMARELO" "📝 Log detalhado salvo em: $LOG_FILE"
+
+## Limpa arquivos temporários
+msg "$BRANCO" "🧹 Limpando arquivos temporários..."
+exec_log "rm -f docker-compose.traefik-portainer.yml docker-compose.minio.yml" "Removendo arquivos docker-compose temporários"
+msg "$VERDE" "✅ Arquivos temporários removidos"
