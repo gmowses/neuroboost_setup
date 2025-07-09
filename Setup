@@ -745,7 +745,7 @@ services:
       - TZ=America/Sao_Paulo
     labels:
       - traefik.enable=true
-      - traefik.http.routers.n8n_editor.rule=Host(`$N8N_HOST`)
+      - traefik.http.routers.n8n_editor.rule=Host(\`\${N8N_HOST}\`)
       - traefik.http.routers.n8n_editor.entrypoints=websecure
       - traefik.http.routers.n8n_editor.priority=1
       - traefik.http.routers.n8n_editor.tls.certresolver=letsencryptresolver
@@ -798,7 +798,7 @@ services:
       - TZ=America/Sao_Paulo
     labels:
       - traefik.enable=true
-      - traefik.http.routers.n8n_webhook.rule=Host(`$N8N_WEBHOOK_HOST`)
+      - traefik.http.routers.n8n_webhook.rule=Host(\`\${N8N_WEBHOOK_HOST}\`)
       - traefik.http.routers.n8n_webhook.entrypoints=websecure
       - traefik.http.routers.n8n_webhook.priority=1
       - traefik.http.routers.n8n_webhook.tls.certresolver=letsencryptresolver
@@ -941,6 +941,17 @@ if exec_log "docker compose -f docker-compose.redis.yml up -d" "Deploy do Redis"
 else
     msg "$VERMELHO" "❌ Erro ao iniciar Redis"
     log_message "ERRO: Falha ao iniciar Redis"
+    exit 1
+fi
+
+# Cria volume PostgreSQL
+msg "$AMARELO" "💾 Criando volume PostgreSQL..."
+if exec_log "docker volume create ${NOME_INSTANCIA}_postgres_data" "Criando volume PostgreSQL"; then
+    msg "$VERDE" "✅ Volume PostgreSQL criado"
+    log_message "Volume PostgreSQL criado com sucesso"
+else
+    msg "$VERMELHO" "❌ Erro ao criar volume PostgreSQL"
+    log_message "ERRO: Falha ao criar volume PostgreSQL"
     exit 1
 fi
 
@@ -1097,10 +1108,10 @@ Ver status dos containers:
   docker ps
 
 Ver logs Traefik:
-  docker compose -f docker-compose.traefik.yml logs -f
+  docker compose -f docker-compose.traefik-portainer.yml logs -f traefik
 
 Ver logs Portainer:
-  docker compose -f docker-compose.portainer.yml logs -f
+  docker compose -f docker-compose.traefik-portainer.yml logs -f portainer
 
 Ver logs MinIO:
   docker compose -f docker-compose.minio.yml logs -f
