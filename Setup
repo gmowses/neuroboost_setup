@@ -486,7 +486,7 @@ else
 fi
 
 ## Cria diretório do projeto
-PROJETO_DIR="/opt/${NOME_INSTANCIA}"
+PROJETO_DIR="/root/${NOME_INSTANCIA}"
 mkdir -p "$PROJETO_DIR"
 cd "$PROJETO_DIR"
 
@@ -502,8 +502,8 @@ msg "$AMARELO" "=== CRIANDO CONFIGURAÇÕES ==="
 echo ""
 
 ## Cria docker-compose.yml com todos os serviços
-## Cria arquivos docker-compose temporários
-msg "$BRANCO" "📝 Criando arquivos docker-compose temporários..."
+## Cria arquivos docker-compose
+msg "$BRANCO" "📝 Criando arquivos docker-compose..."
 
 ## Cria Traefik + Portainer juntos
 cat > docker-compose.traefik-portainer.yml << EOF
@@ -617,7 +617,7 @@ networks:
     external: true
 EOF
 
-msg "$VERDE" "✅ Arquivos docker-compose temporários criados"
+msg "$VERDE" "✅ Arquivos docker-compose criados"
 
 
 
@@ -811,7 +811,7 @@ Atualizar imagens:
 ===================================================
 EOF
 
-## Salva também em /root para backup
+## Salva também em /root/dados_vps para backup
 mkdir -p /root/dados_vps
 cp credenciais.txt /root/dados_vps/${NOME_INSTANCIA}_credenciais.txt
 
@@ -858,12 +858,17 @@ msg "$AMARELO" "📄 Credenciais salvas em:"
 msg "$BRANCO" "  • $PROJETO_DIR/credenciais.txt"
 msg "$BRANCO" "  • /root/dados_vps/${NOME_INSTANCIA}_credenciais.txt"
 echo ""
+msg "$AMARELO" "📁 Estrutura de diretórios:"
+msg "$BRANCO" "  • $PROJETO_DIR/ - Diretório principal do cliente"
+msg "$BRANCO" "  • $PROJETO_DIR/docker-compose.traefik-portainer.yml"
+msg "$BRANCO" "  • $PROJETO_DIR/docker-compose.minio.yml"
+msg "$BRANCO" "  • $PROJETO_DIR/credenciais.txt"
+msg "$BRANCO" "  • $PROJETO_DIR/letsencrypt/ - Certificados SSL"
+echo ""
 
 msg "$AMARELO" "=== ARQUIVOS CRIADOS ==="
-msg "$BRANCO" "• docker-compose.network.yml - Rede compartilhada"
-msg "$BRANCO" "• docker-compose.traefik.yml - Proxy reverso Traefik"
-msg "$BRANCO" "• docker-compose.portainer.yml - Gerenciamento Docker"
-msg "$BRANCO" "• docker-compose.minio.yml - Armazenamento de objetos"
+msg "$BRANCO" "• docker-compose.traefik-portainer.yml - Traefik + Portainer"
+msg "$BRANCO" "• docker-compose.minio.yml - MinIO"
 msg "$BRANCO" "• credenciais.txt - Todas as credenciais"
 echo ""
 msg "$AMARELO" "=== CONFIGURAÇÕES DE SISTEMA ==="
@@ -882,11 +887,11 @@ echo ""
 
 msg "$AMARELO" "=== COMANDOS ÚTEIS ==="
 msg "$BRANCO" "• Ver status geral: cd $PROJETO_DIR && docker ps"
-msg "$BRANCO" "• Ver logs Traefik: cd $PROJETO_DIR && docker compose -f docker-compose.traefik.yml logs -f"
-msg "$BRANCO" "• Ver logs Portainer: cd $PROJETO_DIR && docker compose -f docker-compose.portainer.yml logs -f"
+msg "$BRANCO" "• Ver logs Traefik: cd $PROJETO_DIR && docker compose -f docker-compose.traefik-portainer.yml logs -f traefik"
+msg "$BRANCO" "• Ver logs Portainer: cd $PROJETO_DIR && docker compose -f docker-compose.traefik-portainer.yml logs -f portainer"
 msg "$BRANCO" "• Ver logs MinIO: cd $PROJETO_DIR && docker compose -f docker-compose.minio.yml logs -f"
-msg "$BRANCO" "• Reiniciar Traefik: cd $PROJETO_DIR && docker compose -f docker-compose.traefik.yml restart"
-msg "$BRANCO" "• Reiniciar Portainer: cd $PROJETO_DIR && docker compose -f docker-compose.portainer.yml restart"
+msg "$BRANCO" "• Reiniciar Traefik: cd $PROJETO_DIR && docker compose -f docker-compose.traefik-portainer.yml restart traefik"
+msg "$BRANCO" "• Reiniciar Portainer: cd $PROJETO_DIR && docker compose -f docker-compose.traefik-portainer.yml restart portainer"
 msg "$BRANCO" "• Reiniciar MinIO: cd $PROJETO_DIR && docker compose -f docker-compose.minio.yml restart"
 echo ""
 
@@ -905,6 +910,7 @@ log_message "MinIO: https://$URL_MINIO"
 log_message "S3: https://$URL_S3"
 log_message "Fuso horário configurado: $(timedatectl show --property=Timezone --value)"
 log_message "Sincronização NTP: $(timedatectl show --property=NTPSynchronized --value)"
+log_message "Diretório do projeto: $PROJETO_DIR"
 log_message "Credenciais salvas em: $PROJETO_DIR/credenciais.txt"
 log_message "Log da instalação: $LOG_FILE"
 log_message "Data/Hora de conclusão: $(date)"
@@ -912,7 +918,8 @@ log_message "=========================================="
 
 msg "$AMARELO" "📝 Log detalhado salvo em: $LOG_FILE"
 
-## Limpa arquivos temporários
-msg "$BRANCO" "🧹 Limpando arquivos temporários..."
-exec_log "rm -f docker-compose.traefik-portainer.yml docker-compose.minio.yml" "Removendo arquivos docker-compose temporários"
-msg "$VERDE" "✅ Arquivos temporários removidos"
+## Arquivos docker-compose mantidos para consulta
+msg "$BRANCO" "📁 Arquivos docker-compose mantidos para consulta futura:"
+msg "$AMARELO" "• docker-compose.traefik-portainer.yml - Traefik + Portainer"
+msg "$AMARELO" "• docker-compose.minio.yml - MinIO"
+msg "$VERDE" "✅ Arquivos preservados para manutenção"
