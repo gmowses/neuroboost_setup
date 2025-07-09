@@ -745,7 +745,7 @@ services:
       - TZ=America/Sao_Paulo
     labels:
       - traefik.enable=true
-      - traefik.http.routers.n8n_editor.rule=Host(\`\${N8N_HOST}\`)
+      - traefik.http.routers.n8n_editor.rule=Host('${N8N_HOST}')
       - traefik.http.routers.n8n_editor.entrypoints=websecure
       - traefik.http.routers.n8n_editor.priority=1
       - traefik.http.routers.n8n_editor.tls.certresolver=letsencryptresolver
@@ -798,7 +798,7 @@ services:
       - TZ=America/Sao_Paulo
     labels:
       - traefik.enable=true
-      - traefik.http.routers.n8n_webhook.rule=Host(\`\${N8N_WEBHOOK_HOST}\`)
+      - traefik.http.routers.n8n_webhook.rule=Host('${N8N_WEBHOOK_HOST}')
       - traefik.http.routers.n8n_webhook.entrypoints=websecure
       - traefik.http.routers.n8n_webhook.priority=1
       - traefik.http.routers.n8n_webhook.tls.certresolver=letsencryptresolver
