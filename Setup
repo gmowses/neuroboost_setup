@@ -363,18 +363,21 @@ PASS_PORTAINER=$(gerar_senha 16)
 PASS_MINIO=$(gerar_senha 12)
 PASS_TRAEFIK=$(gerar_senha 14)
 PASS_POSTGRES=$(gerar_senha 16)
+PASS_RABBITMQ=$(gerar_senha 16)
 N8N_ENCRYPTION_KEY=$(gerar_senha 32)
 
 ## Define usuários
 USER_PORTAINER="$USUARIO_PADRAO"
 USER_MINIO="$USUARIO_PADRAO"
 USER_TRAEFIK="$USUARIO_PADRAO"
+USER_RABBITMQ="$USUARIO_PADRAO"
 
 ## Define URLs automáticas
 URL_TRAEFIK="traefik.${NOME_INSTANCIA}.${DOMINIO_BASE}"
 URL_PORTAINER="portainer.${NOME_INSTANCIA}.${DOMINIO_BASE}"
 URL_MINIO="minio.${NOME_INSTANCIA}.${DOMINIO_BASE}"
 URL_S3="s3.${NOME_INSTANCIA}.${DOMINIO_BASE}"
+URL_RABBITMQ="rabbitmq.${NOME_INSTANCIA}.${DOMINIO_BASE}"
 N8N_HOST="n8n.${NOME_INSTANCIA}.${DOMINIO_BASE}"
 N8N_WEBHOOK_HOST="webhook.${NOME_INSTANCIA}.${DOMINIO_BASE}"
 
@@ -695,6 +698,50 @@ networks:
     name: ${NOME_INSTANCIA}_network
 EOF
 
+## Cria RabbitMQ
+cat > docker-compose.rabbitmq.yml << EOF
+version: '3.8'
+
+services:
+  rabbitmq:
+    image: rabbitmq:management
+    container_name: ${NOME_INSTANCIA}_rabbitmq
+    restart: unless-stopped
+    command: rabbitmq-server
+    hostname: rabbitmq
+    environment:
+      - TZ=America/Sao_Paulo
+      - RABBITMQ_DEFAULT_USER=${USER_RABBITMQ}
+      - RABBITMQ_DEFAULT_PASS=${PASS_RABBITMQ}
+      - RABBITMQ_ERLANG_COOKIE=f9a807f6357ab93bcd653bbaa1d99dd3
+      - RABBITMQ_DEFAULT_VHOST=/
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+      - /etc/localtime:/etc/localtime:ro
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.rabbitmq.rule=Host(\`${URL_RABBITMQ}\`)"
+      - "traefik.http.routers.rabbitmq.entrypoints=websecure"
+      - "traefik.http.routers.rabbitmq.tls.certresolver=letsencryptresolver"
+      - "traefik.http.routers.rabbitmq.service=rabbitmq"
+      - "traefik.http.services.rabbitmq.loadbalancer.server.port=15672"
+    networks:
+      - ${NOME_INSTANCIA}_network
+    #ports:
+    #  - 5672:5672
+    #  - 15672:15672
+
+volumes:
+  rabbitmq_data:
+    external: true
+    name: ${NOME_INSTANCIA}_rabbitmq_data
+
+networks:
+  ${NOME_INSTANCIA}_network:
+    external: true
+    name: ${NOME_INSTANCIA}_network
+EOF
+
 ## Cria N8N
 cat > docker-compose.n8n.yml << EOF
 version: '3.8'
@@ -948,10 +995,20 @@ fi
 msg "$AMARELO" "💾 Criando volume PostgreSQL..."
 if exec_log "docker volume create ${NOME_INSTANCIA}_postgres_data" "Criando volume PostgreSQL"; then
     msg "$VERDE" "✅ Volume PostgreSQL criado"
-    log_message "Volume PostgreSQL criado com sucesso"
 else
     msg "$VERMELHO" "❌ Erro ao criar volume PostgreSQL"
     log_message "ERRO: Falha ao criar volume PostgreSQL"
+    exit 1
+fi
+
+# Cria volume RabbitMQ
+msg "$AMARELO" "📦 Criando volume RabbitMQ..."
+if exec_log "docker volume create ${NOME_INSTANCIA}_rabbitmq_data" "Criando volume RabbitMQ"; then
+    msg "$VERDE" "✅ Volume RabbitMQ criado"
+    log_message "Volume RabbitMQ criado com sucesso"
+else
+    msg "$VERMELHO" "❌ Erro ao criar volume RabbitMQ"
+    log_message "ERRO: Falha ao criar volume RabbitMQ"
     exit 1
 fi
 
@@ -980,6 +1037,17 @@ else
     log_message "Banco de dados N8N já existia ou erro na criação"
 fi
 
+# Inicia RabbitMQ
+msg "$AMARELO" "🐰 Iniciando RabbitMQ..."
+if exec_log "docker compose -f docker-compose.rabbitmq.yml up -d" "Deploy do RabbitMQ"; then
+    msg "$VERDE" "✅ RabbitMQ iniciado"
+    log_message "RabbitMQ iniciado com sucesso"
+else
+    msg "$VERMELHO" "❌ Erro ao iniciar RabbitMQ"
+    log_message "ERRO: Falha ao iniciar RabbitMQ"
+    exit 1
+fi
+
 # Inicia N8N
 msg "$AMARELO" "🤖 Iniciando N8N..."
 if exec_log "docker compose -f docker-compose.n8n.yml up -d" "Deploy do N8N"; then
@@ -1000,6 +1068,7 @@ aguardar_container "${NOME_INSTANCIA}_portainer"
 aguardar_container "${NOME_INSTANCIA}_minio"
 aguardar_container "${NOME_INSTANCIA}_redis"
 aguardar_container "${NOME_INSTANCIA}_postgres"
+aguardar_container "${NOME_INSTANCIA}_rabbitmq"
 aguardar_container "${NOME_INSTANCIA}_n8n_editor"
 aguardar_container "${NOME_INSTANCIA}_n8n_webhook"
 aguardar_container "${NOME_INSTANCIA}_n8n_worker"
@@ -1063,6 +1132,7 @@ Traefik Dashboard: https://$URL_TRAEFIK
 Portainer: https://$URL_PORTAINER
 MinIO Console: https://$URL_MINIO
 MinIO S3 API: https://$URL_S3
+RabbitMQ Management: https://$URL_RABBITMQ
 N8N Editor: https://$N8N_HOST
 N8N Webhook: https://$N8N_WEBHOOK_HOST
 
@@ -1091,6 +1161,14 @@ POSTGRESQL:
   Usuário: postgres
   Senha: $PASS_POSTGRES
   Banco N8N: n8n_queue
+
+RABBITMQ:
+  URL: https://$URL_RABBITMQ
+  Usuário: $USER_RABBITMQ
+  Senha: $PASS_RABBITMQ
+  Host: rabbitmq
+  Porta AMQP: 5672
+  Porta Management: 15672
 
 N8N:
   Editor: https://$N8N_HOST
@@ -1122,6 +1200,9 @@ Ver logs Redis:
 Ver logs PostgreSQL:
   docker compose -f docker-compose.postgres.yml logs -f
 
+Ver logs RabbitMQ:
+  docker compose -f docker-compose.rabbitmq.yml logs -f
+
 Ver logs N8N:
   docker compose -f docker-compose.n8n.yml logs -f
 
@@ -1130,6 +1211,7 @@ Parar todos os serviços:
   docker compose -f docker-compose.minio.yml down
   docker compose -f docker-compose.redis.yml down
   docker compose -f docker-compose.postgres.yml down
+  docker compose -f docker-compose.rabbitmq.yml down
   docker compose -f docker-compose.n8n.yml down
 
 Reiniciar Traefik:
@@ -1147,6 +1229,9 @@ Reiniciar Redis:
 Reiniciar PostgreSQL:
   docker compose -f docker-compose.postgres.yml restart
 
+Reiniciar RabbitMQ:
+  docker compose -f docker-compose.rabbitmq.yml restart
+
 Reiniciar N8N:
   docker compose -f docker-compose.n8n.yml restart
 
@@ -1155,6 +1240,7 @@ Atualizar imagens:
   docker compose -f docker-compose.minio.yml pull && docker compose -f docker-compose.minio.yml up -d
   docker compose -f docker-compose.redis.yml pull && docker compose -f docker-compose.redis.yml up -d
   docker compose -f docker-compose.postgres.yml pull && docker compose -f docker-compose.postgres.yml up -d
+  docker compose -f docker-compose.rabbitmq.yml pull && docker compose -f docker-compose.rabbitmq.yml up -d
   docker compose -f docker-compose.n8n.yml pull && docker compose -f docker-compose.n8n.yml up -d
 
 ===================================================
@@ -1210,6 +1296,15 @@ msg "$BRANCO" "  🔑 Senha: $VERMELHO$PASS_POSTGRES"
 msg "$BRANCO" "  📊 Banco N8N: $VERDE n8n_queue"
 echo ""
 
+msg "$BRANCO" "RABBITMQ:"
+msg "$BRANCO" "  🌐 URL: $VERDE https://$URL_RABBITMQ"
+msg "$BRANCO" "  👤 Usuário: $VERDE$USER_RABBITMQ"
+msg "$BRANCO" "  🔑 Senha: $VERMELHO$PASS_RABBITMQ"
+msg "$BRANCO" "  🗄️ Host: $VERDE rabbitmq"
+msg "$BRANCO" "  🔌 Porta AMQP: $VERDE 5672"
+msg "$BRANCO" "  🔌 Porta Management: $VERDE 15672"
+echo ""
+
 msg "$BRANCO" "N8N:"
 msg "$BRANCO" "  🤖 Editor: $VERDE https://$N8N_HOST"
 msg "$BRANCO" "  🔗 Webhook: $VERDE https://$N8N_WEBHOOK_HOST"
@@ -1225,6 +1320,7 @@ msg "$BRANCO" "  • $PROJETO_DIR/docker-compose.traefik-portainer.yml"
 msg "$BRANCO" "  • $PROJETO_DIR/docker-compose.minio.yml"
 msg "$BRANCO" "  • $PROJETO_DIR/docker-compose.redis.yml"
 msg "$BRANCO" "  • $PROJETO_DIR/docker-compose.postgres.yml"
+msg "$BRANCO" "  • $PROJETO_DIR/docker-compose.rabbitmq.yml"
 msg "$BRANCO" "  • $PROJETO_DIR/docker-compose.n8n.yml"
 msg "$BRANCO" "  • $PROJETO_DIR/credenciais.txt"
 msg "$BRANCO" "  • $PROJETO_DIR/letsencrypt/ - Certificados SSL"
@@ -1235,6 +1331,7 @@ msg "$BRANCO" "• docker-compose.traefik-portainer.yml - Traefik + Portainer"
 msg "$BRANCO" "• docker-compose.minio.yml - MinIO"
 msg "$BRANCO" "• docker-compose.redis.yml - Redis"
 msg "$BRANCO" "• docker-compose.postgres.yml - PostgreSQL"
+msg "$BRANCO" "• docker-compose.rabbitmq.yml - RabbitMQ"
 msg "$BRANCO" "• docker-compose.n8n.yml - N8N (Editor, Webhook, Worker)"
 msg "$BRANCO" "• credenciais.txt - Todas as credenciais"
 echo ""
@@ -1259,12 +1356,14 @@ msg "$BRANCO" "• Ver logs Portainer: cd $PROJETO_DIR && docker compose -f dock
 msg "$BRANCO" "• Ver logs MinIO: cd $PROJETO_DIR && docker compose -f docker-compose.minio.yml logs -f"
 msg "$BRANCO" "• Ver logs Redis: cd $PROJETO_DIR && docker compose -f docker-compose.redis.yml logs -f"
 msg "$BRANCO" "• Ver logs PostgreSQL: cd $PROJETO_DIR && docker compose -f docker-compose.postgres.yml logs -f"
+msg "$BRANCO" "• Ver logs RabbitMQ: cd $PROJETO_DIR && docker compose -f docker-compose.rabbitmq.yml logs -f"
 msg "$BRANCO" "• Ver logs N8N: cd $PROJETO_DIR && docker compose -f docker-compose.n8n.yml logs -f"
 msg "$BRANCO" "• Reiniciar Traefik: cd $PROJETO_DIR && docker compose -f docker-compose.traefik-portainer.yml restart traefik"
 msg "$BRANCO" "• Reiniciar Portainer: cd $PROJETO_DIR && docker compose -f docker-compose.traefik-portainer.yml restart portainer"
 msg "$BRANCO" "• Reiniciar MinIO: cd $PROJETO_DIR && docker compose -f docker-compose.minio.yml restart"
 msg "$BRANCO" "• Reiniciar Redis: cd $PROJETO_DIR && docker compose -f docker-compose.redis.yml restart"
 msg "$BRANCO" "• Reiniciar PostgreSQL: cd $PROJETO_DIR && docker compose -f docker-compose.postgres.yml restart"
+msg "$BRANCO" "• Reiniciar RabbitMQ: cd $PROJETO_DIR && docker compose -f docker-compose.rabbitmq.yml restart"
 msg "$BRANCO" "• Reiniciar N8N: cd $PROJETO_DIR && docker compose -f docker-compose.n8n.yml restart"
 echo ""
 
@@ -1281,6 +1380,7 @@ log_message "Traefik: https://$URL_TRAEFIK"
 log_message "Portainer: https://$URL_PORTAINER"
 log_message "MinIO: https://$URL_MINIO"
 log_message "S3: https://$URL_S3"
+log_message "RabbitMQ: https://$URL_RABBITMQ"
 log_message "N8N Editor: https://$N8N_HOST"
 log_message "N8N Webhook: https://$N8N_WEBHOOK_HOST"
 log_message "PostgreSQL: localhost:5432 (banco: n8n_queue)"
