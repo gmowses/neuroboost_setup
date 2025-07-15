@@ -2,7 +2,19 @@
 
 ## ===================================================================================================
 ##                           INSTALADOR DOCKER COMPOSE - NEUROBOOST DIGITAL
-##                              TRAEFIK + PORTAINER + MINIO
+##                              TRAEFIK + PORTAINER + MINIO + FAQ SYSTEM
+## ===================================================================================================
+##
+## VARIÁVEIS DE AMBIENTE SUPORTADAS (opcionais):
+##   NEUROBOOST_INSTANCE     - Nome da instância (ex: cliente1, empresa2) [OBRIGATÓRIO]
+##   NEUROBOOST_EMAIL        - Email para notificações SSL (padrão: ssl@neuroboost.digital)
+##   NEUROBOOST_AUTO_CONFIRM - Auto-confirmar instalação (true/false)
+##
+## EXEMPLO DE USO AUTOMATIZADO:
+##   export NEUROBOOST_INSTANCE="cliente1"
+##   export NEUROBOOST_AUTO_CONFIRM="true"
+##   bash <(curl -sSL https://raw.githubusercontent.com/gmowses/neuroboost_setup/refs/heads/main/Setup)
+##
 ## ===================================================================================================
 
 ## Cores
@@ -326,35 +338,49 @@ msg "$AMARELO" "=== CONFIGURAÇÃO INICIAL ==="
 echo ""
 
 ## Nome da instância
-while true; do
-    msg "$BRANCO" "Digite o nome da instância (ex: cliente1, empresa2):"
-    msg "$AMARELO" "➤ Este nome será usado como subdomínio para todas as aplicações"
-    read -p "> " nome_instancia_raw
-    
-    NOME_INSTANCIA=$(validar_nome_instancia "$nome_instancia_raw")
-    
+if [ -n "$NEUROBOOST_INSTANCE" ]; then
+    # Usa variável de ambiente se definida
+    NOME_INSTANCIA=$(validar_nome_instancia "$NEUROBOOST_INSTANCE")
     if [ -z "$NOME_INSTANCIA" ]; then
-        msg "$VERMELHO" "❌ Nome inválido! Use apenas letras, números e hífens."
-        continue
+        msg "$VERMELHO" "❌ Nome da instância inválido na variável NEUROBOOST_INSTANCE!"
+        msg "$VERMELHO" "    Use apenas letras, números e hífens."
+        exit 1
     fi
-    
-    msg "$VERDE" "✓ Nome da instância: $NOME_INSTANCIA"
-    break
-done
+    msg "$VERDE" "✓ Nome da instância (variável): $NOME_INSTANCIA"
+else
+    # Pergunta interativamente se não definida
+    while true; do
+        msg "$BRANCO" "Digite o nome da instância (ex: cliente1, empresa2):"
+        msg "$AMARELO" "➤ Este nome será usado como subdomínio para todas as aplicações"
+        read -p "> " nome_instancia_raw
+        
+        NOME_INSTANCIA=$(validar_nome_instancia "$nome_instancia_raw")
+        
+        if [ -z "$NOME_INSTANCIA" ]; then
+            msg "$VERMELHO" "❌ Nome inválido! Use apenas letras, números e hífens."
+            continue
+        fi
+        
+        msg "$VERDE" "✓ Nome da instância: $NOME_INSTANCIA"
+        break
+    done
+fi
 
 ## Email para certificados SSL
 echo ""
-while true; do
-    msg "$BRANCO" "Digite seu email (para notificações SSL):"
-    read -p "> " EMAIL_SSL
-    
-    if [[ "$EMAIL_SSL" =~ ^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$ ]]; then
-        msg "$VERDE" "✓ Email: $EMAIL_SSL"
-        break
-    else
-        msg "$VERMELHO" "❌ Email inválido!"
+if [ -n "$NEUROBOOST_EMAIL" ]; then
+    # Usa variável de ambiente se definida
+    EMAIL_SSL="$NEUROBOOST_EMAIL"
+    if [[ ! "$EMAIL_SSL" =~ ^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$ ]]; then
+        msg "$VERMELHO" "❌ Email inválido na variável NEUROBOOST_EMAIL!"
+        exit 1
     fi
-done
+    msg "$VERDE" "✓ Email (variável): $EMAIL_SSL"
+else
+    # Usa email padrão da Neuroboost
+    EMAIL_SSL="ssl@neuroboost.digital"
+    msg "$VERDE" "✓ Email (padrão): $EMAIL_SSL"
+fi
 
 ## Gera senhas automaticamente
 msg "$AMARELO" ""
@@ -400,7 +426,15 @@ msg "$BRANCO" "  • N8N Webhook: $VERDE$N8N_WEBHOOK_HOST"
 msg "$BRANCO" "  • FAQ System: $VERDE$URL_FAQ"
 echo ""
 
-read -p "Confirmar e iniciar instalação? (s/n): " confirmar
+if [ "$NEUROBOOST_AUTO_CONFIRM" = "true" ]; then
+    # Confirma automaticamente se variável definida
+    msg "$VERDE" "✓ Confirmação automática ativada"
+    confirmar="s"
+else
+    # Pergunta confirmação se não definida
+    read -p "Confirmar e iniciar instalação? (s/n): " confirmar
+fi
+
 if [[ ! "$confirmar" =~ ^[Ss]$ ]]; then
     msg "$VERMELHO" "Instalação cancelada."
     exit 1
