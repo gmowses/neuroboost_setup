@@ -17,6 +17,9 @@
 ##
 ## ===================================================================================================
 
+## Versão do script (SEMVER)
+VERSION="1.0.0"
+
 ## Cores
 AMARELO="\e[33m"
 VERDE="\e[32m"
@@ -312,6 +315,7 @@ verificar_requisitos_sistema
 log_message "=========================================="
 log_message "INÍCIO DA INSTALAÇÃO - NEUROBOOST DIGITAL"
 log_message "=========================================="
+log_message "Versão do script: $VERSION"
 log_message "Data/Hora: $(date)"
 log_message "Usuário: $(whoami)"
 log_message "Diretório: $(pwd)"
@@ -329,6 +333,7 @@ msg "$BRANCO" "
 ╚═╝  ╚═══╝╚══════╝ ╚═════╝ ╚═╝  ╚═╝ ╚═════╝ ╚═════╝  ╚═════╝  ╚═════╝ ╚══════╝   ╚═╝   
 
         INSTALADOR DOCKER COMPOSE - TRAEFIK + PORTAINER + MINIO
+                              VERSÃO: $VERSION
 "
 
 msg "$VERDE" "✅ Sistema compatível: Ubuntu 24.04 LTS como root"
@@ -1378,6 +1383,7 @@ cat > credenciais.txt << EOF
               NEUROBOOST DIGITAL
 ===================================================
 
+Versão do Script: $VERSION
 Data da Instalação: $(date)
 Nome da Instância: $NOME_INSTANCIA
 Diretório do Projeto: $PROJETO_DIR
@@ -1665,6 +1671,7 @@ msg "$AMARELO" "╚════════════════════�
 log_message "=========================================="
 log_message "INSTALAÇÃO CONCLUÍDA COM SUCESSO"
 log_message "=========================================="
+log_message "Versão do script: $VERSION"
 log_message "Nome da instância: $NOME_INSTANCIA"
 log_message "Traefik: https://$URL_TRAEFIK"
 log_message "Portainer: https://$URL_PORTAINER"
