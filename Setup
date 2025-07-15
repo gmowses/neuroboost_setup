@@ -397,6 +397,7 @@ msg "$BRANCO" "  • S3: $VERDE$URL_S3"
 msg "$BRANCO" "  • RabbitMQ: $VERDE$URL_RABBITMQ"
 msg "$BRANCO" "  • N8N Editor: $VERDE$N8N_HOST"
 msg "$BRANCO" "  • N8N Webhook: $VERDE$N8N_WEBHOOK_HOST"
+msg "$BRANCO" "  • FAQ System: $VERDE$URL_FAQ"
 echo ""
 
 read -p "Confirmar e iniciar instalação? (s/n): " confirmar
@@ -675,8 +676,22 @@ services:
     restart: unless-stopped
     command: >
       postgres
-      -c max_connections=500
-      -c shared_buffers=512MB
+      -c max_connections=1000
+      -c shared_buffers=1GB
+      -c effective_cache_size=3GB
+      -c maintenance_work_mem=256MB
+      -c checkpoint_completion_target=0.9
+      -c wal_buffers=16MB
+      -c default_statistics_target=100
+      -c random_page_cost=1.1
+      -c effective_io_concurrency=200
+      -c work_mem=32MB
+      -c min_wal_size=1GB
+      -c max_wal_size=4GB
+      -c max_worker_processes=8
+      -c max_parallel_workers_per_gather=4
+      -c max_parallel_workers=8
+      -c max_parallel_maintenance_workers=4
     environment:
       - POSTGRES_PASSWORD=${PASS_POSTGRES}
       - TZ=America/Sao_Paulo
@@ -904,6 +919,67 @@ networks:
     name: ${NOME_INSTANCIA}_network
 EOF
 
+## Gera senha para o usuário FAQ
+PASS_FAQ_USER=$(gerar_senha 16)
+USER_FAQ="faq_user"
+
+## Define URL FAQ
+URL_FAQ="faq.${NOME_INSTANCIA}.${DOMINIO_BASE}"
+
+## Cria FAQ System
+cat > docker-compose.faq.yml << EOF
+version: '3.8'
+
+services:
+  faq-system:
+    image: ghcr.io/gmowses/faq:v1
+    container_name: ${NOME_INSTANCIA}_faq_system
+    restart: unless-stopped
+    
+    environment:
+      # Banco de dados PostgreSQL
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=chatdigi
+      - DB_USER=${USER_FAQ}
+      - DB_PASSWORD=${PASS_FAQ_USER}
+      
+      # JWT
+      - JWT_SECRET=${N8N_ENCRYPTION_KEY}
+      
+      # URLs
+      - FRONTEND_URL=https://${URL_FAQ}
+      - SYNC_WEBHOOK_URL=https://${N8N_WEBHOOK_HOST}/webhook/sync-rag
+      
+      # Configurações da aplicação
+      - NODE_ENV=production
+      - PORT=3001
+      - TZ=America/Sao_Paulo
+
+    volumes:
+      - faq_logs:/app/logs
+
+    networks:
+      - ${NOME_INSTANCIA}_network
+
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.faq_system.rule=Host(\`${URL_FAQ}\`)"
+      - "traefik.http.routers.faq_system.entrypoints=websecure"
+      - "traefik.http.routers.faq_system.tls.certresolver=letsencryptresolver"
+      - "traefik.http.services.faq_system.loadbalancer.server.port=3001"
+
+volumes:
+  faq_logs:
+    external: true
+    name: ${NOME_INSTANCIA}_faq_logs
+
+networks:
+  ${NOME_INSTANCIA}_network:
+    external: true
+    name: ${NOME_INSTANCIA}_network
+EOF
+
 msg "$VERDE" "✅ Arquivos docker-compose criados"
 
 
@@ -1038,6 +1114,130 @@ else
     log_message "Banco de dados N8N já existia ou erro na criação"
 fi
 
+# Cria banco de dados ChatDigi no PostgreSQL
+msg "$AMARELO" "🗄️ Criando banco de dados ChatDigi..."
+if exec_log "docker exec ${NOME_INSTANCIA}_postgres psql -U postgres -c 'CREATE DATABASE chatdigi;'" "Criando banco de dados ChatDigi"; then
+    msg "$VERDE" "✅ Banco de dados ChatDigi criado"
+    log_message "Banco de dados ChatDigi criado com sucesso"
+else
+    msg "$AMARELO" "⚠️ Banco de dados ChatDigi já existe ou erro na criação"
+    log_message "Banco de dados ChatDigi já existia ou erro na criação"
+fi
+
+# Cria usuário específico para o FAQ
+msg "$AMARELO" "👤 Criando usuário FAQ..."
+CREATE_USER_SQL="CREATE USER ${USER_FAQ} WITH PASSWORD '${PASS_FAQ_USER}';"
+if exec_log "docker exec ${NOME_INSTANCIA}_postgres psql -U postgres -c \"${CREATE_USER_SQL}\"" "Criando usuário FAQ"; then
+    msg "$VERDE" "✅ Usuário FAQ criado"
+    log_message "Usuário FAQ criado com sucesso"
+else
+    msg "$AMARELO" "⚠️ Usuário FAQ já existe ou erro na criação"
+    log_message "Usuário FAQ já existia ou erro na criação"
+fi
+
+# Dá permissões totais ao usuário FAQ
+msg "$AMARELO" "🔑 Configurando permissões do usuário FAQ..."
+GRANT_PERMISSIONS_SQL="GRANT ALL PRIVILEGES ON DATABASE chatdigi TO ${USER_FAQ};"
+if exec_log "docker exec ${NOME_INSTANCIA}_postgres psql -U postgres -c \"${GRANT_PERMISSIONS_SQL}\"" "Configurando permissões"; then
+    msg "$VERDE" "✅ Permissões configuradas"
+    log_message "Permissões do usuário FAQ configuradas com sucesso"
+else
+    msg "$AMARELO" "⚠️ Erro ao configurar permissões"
+    log_message "Erro ao configurar permissões do usuário FAQ"
+fi
+
+# Cria script SQL temporário para as tabelas
+msg "$AMARELO" "📝 Criando estrutura das tabelas FAQ..."
+cat > /tmp/chatdigi_schema.sql << 'EOSQL'
+-- Script de estrutura para o sistema FAQ (sem dados de exemplo)
+-- Assume que a tabela Users já existe
+
+-- Criar tabela categoria
+CREATE TABLE categoria (
+    id SERIAL PRIMARY KEY,
+    nome VARCHAR(255) NOT NULL UNIQUE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Criar tabela sub_categoria
+CREATE TABLE sub_categoria (
+    id SERIAL PRIMARY KEY,
+    nome VARCHAR(255) NOT NULL,
+    categoria_id INTEGER NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (categoria_id) REFERENCES categoria(id) ON DELETE CASCADE,
+    UNIQUE(nome, categoria_id)
+);
+
+-- Criar tabela faq
+CREATE TABLE faq (
+    id SERIAL PRIMARY KEY,
+    pergunta TEXT NOT NULL,
+    resposta TEXT NOT NULL,
+    categoria_id INTEGER NOT NULL,
+    sub_categoria_id INTEGER,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (categoria_id) REFERENCES categoria(id) ON DELETE CASCADE,
+    FOREIGN KEY (sub_categoria_id) REFERENCES sub_categoria(id) ON DELETE SET NULL
+);
+
+-- Índices para performance
+CREATE INDEX idx_faq_categoria ON faq(categoria_id);
+CREATE INDEX idx_faq_sub_categoria ON faq(sub_categoria_id);
+CREATE INDEX idx_sub_categoria_categoria ON sub_categoria(categoria_id);
+
+-- Índice de texto completo para busca
+CREATE INDEX idx_faq_search ON faq USING gin(to_tsvector('portuguese', pergunta || ' ' || resposta));
+
+-- Função para atualizar updated_at
+CREATE OR REPLACE FUNCTION update_updated_at_column()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = CURRENT_TIMESTAMP;
+    RETURN NEW;
+END;
+$$ language 'plpgsql';
+
+-- Trigger para atualizar updated_at na tabela faq
+CREATE TRIGGER update_faq_updated_at 
+    BEFORE UPDATE ON faq 
+    FOR EACH ROW 
+    EXECUTE FUNCTION update_updated_at_column();
+
+-- Grants para usuários (ajustar conforme necessário)
+GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO postgres;
+GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO postgres;
+EOSQL
+
+# Executa o script SQL no banco chatdigi
+if exec_log "docker exec -i ${NOME_INSTANCIA}_postgres psql -U postgres -d chatdigi < /tmp/chatdigi_schema.sql" "Criando tabelas FAQ"; then
+    msg "$VERDE" "✅ Tabelas FAQ criadas com sucesso"
+    log_message "Tabelas FAQ criadas com sucesso"
+else
+    msg "$AMARELO" "⚠️ Erro ao criar tabelas FAQ ou já existem"
+    log_message "Erro ao criar tabelas FAQ ou já existem"
+fi
+
+# Configura permissões específicas nas tabelas para o usuário FAQ
+msg "$AMARELO" "🔐 Configurando permissões específicas nas tabelas..."
+GRANT_TABLE_PERMISSIONS_SQL="
+GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO ${USER_FAQ};
+GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO ${USER_FAQ};
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO ${USER_FAQ};
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO ${USER_FAQ};
+"
+if exec_log "docker exec ${NOME_INSTANCIA}_postgres psql -U postgres -d chatdigi -c \"${GRANT_TABLE_PERMISSIONS_SQL}\"" "Configurando permissões específicas"; then
+    msg "$VERDE" "✅ Permissões específicas configuradas"
+    log_message "Permissões específicas nas tabelas configuradas com sucesso"
+else
+    msg "$AMARELO" "⚠️ Erro ao configurar permissões específicas"
+    log_message "Erro ao configurar permissões específicas nas tabelas"
+fi
+
+# Remove arquivo temporário
+rm -f /tmp/chatdigi_schema.sql
+
 # Inicia RabbitMQ
 msg "$AMARELO" "🐰 Iniciando RabbitMQ..."
 if exec_log "docker compose -f docker-compose.rabbitmq.yml up -d" "Deploy do RabbitMQ"; then
@@ -1060,6 +1260,28 @@ else
     exit 1
 fi
 
+# Cria volume FAQ logs
+msg "$AMARELO" "📝 Criando volume FAQ logs..."
+if exec_log "docker volume create ${NOME_INSTANCIA}_faq_logs" "Criando volume FAQ logs"; then
+    msg "$VERDE" "✅ Volume FAQ logs criado"
+    log_message "Volume FAQ logs criado com sucesso"
+else
+    msg "$VERMELHO" "❌ Erro ao criar volume FAQ logs"
+    log_message "ERRO: Falha ao criar volume FAQ logs"
+    exit 1
+fi
+
+# Inicia FAQ System
+msg "$AMARELO" "❓ Iniciando Sistema FAQ..."
+if exec_log "docker compose -f docker-compose.faq.yml up -d" "Deploy do FAQ System"; then
+    msg "$VERDE" "✅ Sistema FAQ iniciado"
+    log_message "Sistema FAQ iniciado com sucesso"
+else
+    msg "$VERMELHO" "❌ Erro ao iniciar Sistema FAQ"
+    log_message "ERRO: Falha ao iniciar Sistema FAQ"
+    exit 1
+fi
+
 msg "$VERDE" "✅ Todos os serviços iniciados com sucesso"
 
 ## Aguarda containers ficarem prontos
@@ -1073,6 +1295,7 @@ aguardar_container "${NOME_INSTANCIA}_rabbitmq"
 aguardar_container "${NOME_INSTANCIA}_n8n_editor"
 aguardar_container "${NOME_INSTANCIA}_n8n_webhook"
 aguardar_container "${NOME_INSTANCIA}_n8n_worker"
+aguardar_container "${NOME_INSTANCIA}_faq_system"
 
 ## ===================================================================================================
 ##                                    CONFIGURAÇÃO DO PORTAINER
@@ -1136,6 +1359,7 @@ MinIO S3 API: https://$URL_S3
 RabbitMQ Management: https://$URL_RABBITMQ
 N8N Editor: https://$N8N_HOST
 N8N Webhook: https://$N8N_WEBHOOK_HOST
+FAQ System: https://$URL_FAQ
 
 ===================================================
                   CREDENCIAIS
@@ -1162,6 +1386,9 @@ POSTGRESQL:
   Usuário: postgres
   Senha: $PASS_POSTGRES
   Banco N8N: n8n_queue
+  Banco ChatDigi: chatdigi
+  Usuário FAQ: $USER_FAQ
+  Senha FAQ: $PASS_FAQ_USER
 
 RABBITMQ:
   URL: https://$URL_RABBITMQ
@@ -1175,6 +1402,14 @@ N8N:
   Editor: https://$N8N_HOST
   Webhook: https://$N8N_WEBHOOK_HOST
   Chave de Criptografia: $N8N_ENCRYPTION_KEY
+
+FAQ SYSTEM:
+  URL: https://$URL_FAQ
+  Banco: chatdigi
+  Usuário BD: $USER_FAQ
+  Senha BD: $PASS_FAQ_USER
+  JWT Secret: $N8N_ENCRYPTION_KEY
+  Webhook Sync: https://$N8N_WEBHOOK_HOST/webhook/sync-rag
 
 ===================================================
                 COMANDOS ÚTEIS
@@ -1207,6 +1442,9 @@ Ver logs RabbitMQ:
 Ver logs N8N:
   docker compose -f docker-compose.n8n.yml logs -f
 
+Ver logs FAQ System:
+  docker compose -f docker-compose.faq.yml logs -f
+
 Parar todos os serviços:
   docker compose -f docker-compose.traefik-portainer.yml down
   docker compose -f docker-compose.minio.yml down
@@ -1214,6 +1452,7 @@ Parar todos os serviços:
   docker compose -f docker-compose.postgres.yml down
   docker compose -f docker-compose.rabbitmq.yml down
   docker compose -f docker-compose.n8n.yml down
+  docker compose -f docker-compose.faq.yml down
 
 Reiniciar Traefik:
   docker compose -f docker-compose.traefik-portainer.yml restart traefik
@@ -1236,6 +1475,9 @@ Reiniciar RabbitMQ:
 Reiniciar N8N:
   docker compose -f docker-compose.n8n.yml restart
 
+Reiniciar FAQ System:
+  docker compose -f docker-compose.faq.yml restart
+
 Atualizar imagens:
   docker compose -f docker-compose.traefik-portainer.yml pull && docker compose -f docker-compose.traefik-portainer.yml up -d
   docker compose -f docker-compose.minio.yml pull && docker compose -f docker-compose.minio.yml up -d
@@ -1243,6 +1485,7 @@ Atualizar imagens:
   docker compose -f docker-compose.postgres.yml pull && docker compose -f docker-compose.postgres.yml up -d
   docker compose -f docker-compose.rabbitmq.yml pull && docker compose -f docker-compose.rabbitmq.yml up -d
   docker compose -f docker-compose.n8n.yml pull && docker compose -f docker-compose.n8n.yml up -d
+  docker compose -f docker-compose.faq.yml pull && docker compose -f docker-compose.faq.yml up -d
 
 ===================================================
 EOF
@@ -1312,6 +1555,14 @@ msg "$BRANCO" "  🔗 Webhook: $VERDE https://$N8N_WEBHOOK_HOST"
 msg "$BRANCO" "  🔐 Chave de Criptografia: $VERMELHO$N8N_ENCRYPTION_KEY"
 echo ""
 
+msg "$BRANCO" "FAQ SYSTEM:"
+msg "$BRANCO" "  🌐 URL: $VERDE https://$URL_FAQ"
+msg "$BRANCO" "  🗄️ Banco: $VERDE chatdigi"
+msg "$BRANCO" "  👤 Usuário BD: $VERDE$USER_FAQ"
+msg "$BRANCO" "  🔑 Senha BD: $VERMELHO$PASS_FAQ_USER"
+msg "$BRANCO" "  🔗 Webhook Sync: $VERDE https://$N8N_WEBHOOK_HOST/webhook/sync-rag"
+echo ""
+
 msg "$AMARELO" "📄 Credenciais salvas em:"
 msg "$BRANCO" "  • $PROJETO_DIR/credenciais.txt"
 echo ""
@@ -1323,6 +1574,7 @@ msg "$BRANCO" "  • $PROJETO_DIR/docker-compose.redis.yml"
 msg "$BRANCO" "  • $PROJETO_DIR/docker-compose.postgres.yml"
 msg "$BRANCO" "  • $PROJETO_DIR/docker-compose.rabbitmq.yml"
 msg "$BRANCO" "  • $PROJETO_DIR/docker-compose.n8n.yml"
+msg "$BRANCO" "  • $PROJETO_DIR/docker-compose.faq.yml"
 msg "$BRANCO" "  • $PROJETO_DIR/credenciais.txt"
 msg "$BRANCO" "  • $PROJETO_DIR/letsencrypt/ - Certificados SSL"
 echo ""
@@ -1334,6 +1586,7 @@ msg "$BRANCO" "• docker-compose.redis.yml - Redis"
 msg "$BRANCO" "• docker-compose.postgres.yml - PostgreSQL"
 msg "$BRANCO" "• docker-compose.rabbitmq.yml - RabbitMQ"
 msg "$BRANCO" "• docker-compose.n8n.yml - N8N (Editor, Webhook, Worker)"
+msg "$BRANCO" "• docker-compose.faq.yml - FAQ System"
 msg "$BRANCO" "• credenciais.txt - Todas as credenciais"
 echo ""
 msg "$AMARELO" "=== CONFIGURAÇÕES DE SISTEMA ==="
@@ -1359,6 +1612,7 @@ msg "$BRANCO" "• Ver logs Redis: cd $PROJETO_DIR && docker compose -f docker-c
 msg "$BRANCO" "• Ver logs PostgreSQL: cd $PROJETO_DIR && docker compose -f docker-compose.postgres.yml logs -f"
 msg "$BRANCO" "• Ver logs RabbitMQ: cd $PROJETO_DIR && docker compose -f docker-compose.rabbitmq.yml logs -f"
 msg "$BRANCO" "• Ver logs N8N: cd $PROJETO_DIR && docker compose -f docker-compose.n8n.yml logs -f"
+msg "$BRANCO" "• Ver logs FAQ: cd $PROJETO_DIR && docker compose -f docker-compose.faq.yml logs -f"
 msg "$BRANCO" "• Reiniciar Traefik: cd $PROJETO_DIR && docker compose -f docker-compose.traefik-portainer.yml restart traefik"
 msg "$BRANCO" "• Reiniciar Portainer: cd $PROJETO_DIR && docker compose -f docker-compose.traefik-portainer.yml restart portainer"
 msg "$BRANCO" "• Reiniciar MinIO: cd $PROJETO_DIR && docker compose -f docker-compose.minio.yml restart"
@@ -1366,6 +1620,7 @@ msg "$BRANCO" "• Reiniciar Redis: cd $PROJETO_DIR && docker compose -f docker-
 msg "$BRANCO" "• Reiniciar PostgreSQL: cd $PROJETO_DIR && docker compose -f docker-compose.postgres.yml restart"
 msg "$BRANCO" "• Reiniciar RabbitMQ: cd $PROJETO_DIR && docker compose -f docker-compose.rabbitmq.yml restart"
 msg "$BRANCO" "• Reiniciar N8N: cd $PROJETO_DIR && docker compose -f docker-compose.n8n.yml restart"
+msg "$BRANCO" "• Reiniciar FAQ: cd $PROJETO_DIR && docker compose -f docker-compose.faq.yml restart"
 echo ""
 
 msg "$AMARELO" "╔════════════════════════════════════════════════════════════════╗"
@@ -1384,7 +1639,8 @@ log_message "S3: https://$URL_S3"
 log_message "RabbitMQ: https://$URL_RABBITMQ"
 log_message "N8N Editor: https://$N8N_HOST"
 log_message "N8N Webhook: https://$N8N_WEBHOOK_HOST"
-log_message "PostgreSQL: localhost:5432 (banco: n8n_queue)"
+log_message "FAQ System: https://$URL_FAQ"
+log_message "PostgreSQL: localhost:5432 (bancos: n8n_queue, chatdigi)"
 log_message "Fuso horário configurado: $(timedatectl show --property=Timezone --value)"
 log_message "Sincronização NTP: $(timedatectl show --property=NTPSynchronized --value)"
 log_message "Diretório do projeto: $PROJETO_DIR"
@@ -1399,4 +1655,9 @@ msg "$AMARELO" "📝 Log detalhado salvo em: $LOG_FILE"
 msg "$BRANCO" "📁 Arquivos docker-compose mantidos para consulta futura:"
 msg "$AMARELO" "• docker-compose.traefik-portainer.yml - Traefik + Portainer"
 msg "$AMARELO" "• docker-compose.minio.yml - MinIO"
+msg "$AMARELO" "• docker-compose.redis.yml - Redis"
+msg "$AMARELO" "• docker-compose.postgres.yml - PostgreSQL"
+msg "$AMARELO" "• docker-compose.rabbitmq.yml - RabbitMQ"
+msg "$AMARELO" "• docker-compose.n8n.yml - N8N"
+msg "$AMARELO" "• docker-compose.faq.yml - FAQ System"
 msg "$VERDE" "✅ Arquivos preservados para manutenção"
