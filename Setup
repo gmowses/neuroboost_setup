@@ -322,8 +322,6 @@ log_message "Diretório: $(pwd)"
 log_message "Sistema: $(uname -a)"
 log_message "Arquivo de log: $LOG_FILE"
 log_message "Requisitos de sistema verificados e aprovados"
-
-clear
 msg "$BRANCO" "
 ███╗   ██╗███████╗██╗   ██╗██████╗  ██████╗ ██████╗  ██████╗  ██████╗ ███████╗████████╗
 ████╗  ██║██╔════╝██║   ██║██╔══██╗██╔═══██╗██╔══██╗██╔═══██╗██╔═══██╗██╔════╝╚══██╔══╝
@@ -450,6 +448,10 @@ if [[ ! "$confirmar" =~ ^[Ss]$ ]]; then
     msg "$VERMELHO" "Instalação cancelada."
     exit 1
 fi
+
+## Aguarda 5 segundos antes de iniciar
+msg "$AMARELO" "⏳ Iniciando instalação em 5 segundos..."
+sleep 5
 
 ## ===================================================================================================
 ##                                    PREPARAÇÃO DO SISTEMA
