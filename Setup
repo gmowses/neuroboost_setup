@@ -18,7 +18,7 @@
 ## ===================================================================================================
 
 ## Versão do script (SEMVER)
-VERSION="1.0.0"
+VERSION="1.2.0"
 
 ## Cores
 AMARELO="\e[33m"
@@ -396,6 +396,8 @@ PASS_TRAEFIK=$(gerar_senha 14)
 PASS_POSTGRES=$(gerar_senha 16)
 PASS_RABBITMQ=$(gerar_senha 16)
 N8N_ENCRYPTION_KEY=$(gerar_senha 32)
+PASS_CHATDIGI_JWT=$(gerar_senha 32)
+PASS_CHATDIGI_REFRESH=$(gerar_senha 32)
 
 ## Define usuários
 USER_PORTAINER="$USUARIO_PADRAO"
@@ -411,6 +413,8 @@ URL_S3="s3.${NOME_INSTANCIA}.${DOMINIO_BASE}"
 URL_RABBITMQ="mq.${NOME_INSTANCIA}.${DOMINIO_BASE}"
 N8N_HOST="n8n.${NOME_INSTANCIA}.${DOMINIO_BASE}"
 N8N_WEBHOOK_HOST="webhook.${NOME_INSTANCIA}.${DOMINIO_BASE}"
+URL_CHATDIGI_FRONTEND="chat.${NOME_INSTANCIA}.${DOMINIO_BASE}"
+URL_CHATDIGI_BACKEND="api.${NOME_INSTANCIA}.${DOMINIO_BASE}"
 
 ## Resumo das configurações
 echo ""
@@ -429,6 +433,8 @@ msg "$BRANCO" "  • RabbitMQ: $VERDE$URL_RABBITMQ"
 msg "$BRANCO" "  • N8N Editor: $VERDE$N8N_HOST"
 msg "$BRANCO" "  • N8N Webhook: $VERDE$N8N_WEBHOOK_HOST"
 msg "$BRANCO" "  • FAQ System: $VERDE$URL_FAQ"
+msg "$BRANCO" "  • ChatDigi Frontend: $VERDE$URL_CHATDIGI_FRONTEND"
+msg "$BRANCO" "  • ChatDigi Backend: $VERDE$URL_CHATDIGI_BACKEND"
 echo ""
 
 if [ "$NEUROBOOST_AUTO_CONFIRM" = "true" ]; then
@@ -1019,6 +1025,126 @@ networks:
     name: ${NOME_INSTANCIA}_network
 EOF
 
+## Cria ChatDigi System
+cat > docker-compose.chatdigi.yml << EOF
+version: '3.8'
+
+services:
+  chatdigi-backend:
+    image: ghcr.io/gmowses/chatdigi-backend:v1
+    container_name: ${NOME_INSTANCIA}_chatdigi_backend
+    restart: unless-stopped
+    
+    environment:
+      # Banco de dados
+      - DB_DIALECT=postgres
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=chatdigi
+      - DB_USER=${USER_FAQ}
+      - DB_PASS=${PASS_FAQ_USER}
+      - DB_POOL_MAX=20
+      - DB_POOL_MIN=5
+      - DB_POOL_ACQUIRE=30000
+      - DB_POOL_IDLE=10000
+      
+      # Redis (usando o Redis existente sem senha)
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=
+      - REDIS_URI=redis://redis:6379
+      - REDIS_URI_ACK=redis://redis:6379
+      
+      # JWT
+      - JWT_SECRET=${PASS_CHATDIGI_JWT}
+      - JWT_REFRESH_SECRET=${PASS_CHATDIGI_REFRESH}
+      
+      # URLs
+      - FRONTEND_URL=https://${URL_CHATDIGI_FRONTEND}
+      
+      # Configurações da aplicação
+      - NODE_ENV=production
+      - PORT=8080
+      - MAX_FILE_SIZE=10485760
+      - WHATSAPP_TIMEOUT=30000
+      - TZ=America/Sao_Paulo
+      
+      # Integrações (configurar posteriormente)
+      - OPENAI_API_KEY=
+      - GERENCIANET_CLIENT_ID=
+      - GERENCIANET_CLIENT_SECRET=
+
+    volumes:
+      - chatdigi_backend_uploads:/app/public
+      - chatdigi_backend_logs:/app/logs
+
+    networks:
+      - ${NOME_INSTANCIA}_network
+
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.chatdigi_backend_api.rule=Host(\`${URL_CHATDIGI_BACKEND}\`)"
+      - "traefik.http.routers.chatdigi_backend_api.entrypoints=websecure"
+      - "traefik.http.routers.chatdigi_backend_api.tls.certresolver=letsencryptresolver"
+      - "traefik.http.services.chatdigi_backend_api.loadbalancer.server.port=8080"
+      - "traefik.http.services.chatdigi_backend_api.loadbalancer.passHostHeader=true"
+      - "traefik.http.routers.chatdigi_backend_api.service=chatdigi_backend_api"
+      - "traefik.http.routers.chatdigi_backend_socketio.rule=Host(\`${URL_CHATDIGI_BACKEND}\`)"
+      - "traefik.http.routers.chatdigi_backend_socketio.entrypoints=websecure"
+      - "traefik.http.routers.chatdigi_backend_socketio.tls.certresolver=letsencryptresolver"
+      - "traefik.http.services.chatdigi_backend_socketio.loadbalancer.server.port=8080"
+      - "traefik.http.services.chatdigi_backend_socketio.loadbalancer.passHostHeader=true"
+      - "traefik.http.routers.chatdigi_backend_socketio.service=chatdigi_backend_socketio"
+
+  chatdigi-frontend:
+    image: ghcr.io/gmowses/chatdigi-frontend:v1
+    container_name: ${NOME_INSTANCIA}_chatdigi_frontend
+    restart: unless-stopped
+    
+    environment:
+      - TZ=America/Sao_Paulo
+      - REACT_APP_BACKEND_URL=https://${URL_CHATDIGI_BACKEND}
+
+    networks:
+      - ${NOME_INSTANCIA}_network
+
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.chatdigi_frontend.rule=Host(\`${URL_CHATDIGI_FRONTEND}\`)"
+      - "traefik.http.routers.chatdigi_frontend.entrypoints=websecure"
+      - "traefik.http.routers.chatdigi_frontend.tls.certresolver=letsencryptresolver"
+      - "traefik.http.services.chatdigi_frontend.loadbalancer.server.port=80"
+      - "traefik.http.services.chatdigi_frontend.loadbalancer.passHostHeader=true"
+      - "traefik.http.routers.chatdigi_frontend.service=chatdigi_frontend"
+
+  qr-generator:
+    image: mowses1997/qr-generator:latest
+    container_name: ${NOME_INSTANCIA}_qr_generator
+    restart: unless-stopped
+    
+    environment:
+      - FLASK_ENV=production
+      - FLASK_APP=app.py
+      - TZ=America/Sao_Paulo
+
+    networks:
+      - ${NOME_INSTANCIA}_network
+
+volumes:
+  chatdigi_backend_uploads:
+    external: true
+    name: ${NOME_INSTANCIA}_chatdigi_backend_uploads
+  
+  chatdigi_backend_logs:
+    external: true
+    name: ${NOME_INSTANCIA}_chatdigi_backend_logs
+
+networks:
+  ${NOME_INSTANCIA}_network:
+    external: true
+    name: ${NOME_INSTANCIA}_network
+EOF
+
 msg "$VERDE" "✅ Arquivos docker-compose criados"
 
 
@@ -1191,6 +1317,18 @@ cat > /tmp/chatdigi_schema.sql << 'EOSQL'
 -- Script de estrutura para o sistema FAQ (sem dados de exemplo)
 -- Assume que a tabela Users já existe
 
+-- Criar extensão vector para embeddings
+CREATE EXTENSION IF NOT EXISTS vector;
+
+-- Criar tabela documents para RAG/embeddings
+CREATE TABLE IF NOT EXISTS documents (
+    id BIGSERIAL PRIMARY KEY,
+    content TEXT,
+    metadata JSONB,
+    embedding vector(1536),
+    titulo TEXT
+);
+
 -- Criar tabela categoria
 CREATE TABLE categoria (
     id SERIAL PRIMARY KEY,
@@ -1243,6 +1381,35 @@ CREATE TRIGGER update_faq_updated_at
     BEFORE UPDATE ON faq 
     FOR EACH ROW 
     EXECUTE FUNCTION update_updated_at_column();
+
+-- Função para busca semântica com embeddings
+CREATE OR REPLACE FUNCTION match_documents (
+  query_embedding vector(1536),
+  match_count int DEFAULT NULL,
+  filter jsonb DEFAULT '{}'
+)
+RETURNS TABLE (
+  id bigint,
+  content text,
+  metadata jsonb,
+  similarity float
+)
+LANGUAGE plpgsql
+AS $function$
+#variable_conflict use_column
+BEGIN
+  RETURN QUERY
+  SELECT
+    id,
+    content,
+    metadata,
+    1 - (documents.embedding <=> query_embedding) AS similarity
+  FROM documents
+  WHERE metadata @> filter
+  ORDER BY documents.embedding <=> query_embedding
+  LIMIT match_count;
+END;
+$function$;
 
 -- Grants para usuários (ajustar conforme necessário)
 GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO postgres;
@@ -1310,6 +1477,26 @@ else
     exit 1
 fi
 
+# Cria volumes ChatDigi
+msg "$AMARELO" "💬 Criando volumes ChatDigi..."
+if exec_log "docker volume create ${NOME_INSTANCIA}_chatdigi_backend_uploads" "Criando volume ChatDigi uploads"; then
+    msg "$VERDE" "✅ Volume ChatDigi uploads criado"
+    log_message "Volume ChatDigi uploads criado com sucesso"
+else
+    msg "$VERMELHO" "❌ Erro ao criar volume ChatDigi uploads"
+    log_message "ERRO: Falha ao criar volume ChatDigi uploads"
+    exit 1
+fi
+
+if exec_log "docker volume create ${NOME_INSTANCIA}_chatdigi_backend_logs" "Criando volume ChatDigi logs"; then
+    msg "$VERDE" "✅ Volume ChatDigi logs criado"
+    log_message "Volume ChatDigi logs criado com sucesso"
+else
+    msg "$VERMELHO" "❌ Erro ao criar volume ChatDigi logs"
+    log_message "ERRO: Falha ao criar volume ChatDigi logs"
+    exit 1
+fi
+
 # Inicia FAQ System
 msg "$AMARELO" "❓ Iniciando Sistema FAQ..."
 if exec_log "docker compose -f docker-compose.faq.yml up -d" "Deploy do FAQ System"; then
@@ -1318,6 +1505,17 @@ if exec_log "docker compose -f docker-compose.faq.yml up -d" "Deploy do FAQ Syst
 else
     msg "$VERMELHO" "❌ Erro ao iniciar Sistema FAQ"
     log_message "ERRO: Falha ao iniciar Sistema FAQ"
+    exit 1
+fi
+
+# Inicia ChatDigi System
+msg "$AMARELO" "💬 Iniciando ChatDigi System..."
+if exec_log "docker compose -f docker-compose.chatdigi.yml up -d" "Deploy do ChatDigi System"; then
+    msg "$VERDE" "✅ ChatDigi System iniciado"
+    log_message "ChatDigi System iniciado com sucesso"
+else
+    msg "$VERMELHO" "❌ Erro ao iniciar ChatDigi System"
+    log_message "ERRO: Falha ao iniciar ChatDigi System"
     exit 1
 fi
 
@@ -1335,6 +1533,9 @@ aguardar_container "${NOME_INSTANCIA}_n8n_editor"
 aguardar_container "${NOME_INSTANCIA}_n8n_webhook"
 aguardar_container "${NOME_INSTANCIA}_n8n_worker"
 aguardar_container "${NOME_INSTANCIA}_faq_system"
+aguardar_container "${NOME_INSTANCIA}_chatdigi_backend"
+aguardar_container "${NOME_INSTANCIA}_chatdigi_frontend"
+aguardar_container "${NOME_INSTANCIA}_qr_generator"
 
 ## ===================================================================================================
 ##                                    CONFIGURAÇÃO DO PORTAINER
@@ -1400,6 +1601,8 @@ RabbitMQ Management: https://$URL_RABBITMQ
 N8N Editor: https://$N8N_HOST
 N8N Webhook: https://$N8N_WEBHOOK_HOST
 FAQ System: https://$URL_FAQ
+ChatDigi Frontend: https://$URL_CHATDIGI_FRONTEND
+ChatDigi Backend: https://$URL_CHATDIGI_BACKEND
 
 ===================================================
                   CREDENCIAIS
@@ -1451,6 +1654,16 @@ FAQ SYSTEM:
   JWT Secret: $N8N_ENCRYPTION_KEY
   Webhook Sync: https://$N8N_WEBHOOK_HOST/webhook/sync-rag
 
+CHATDIGI SYSTEM:
+  Frontend: https://$URL_CHATDIGI_FRONTEND
+  Backend API: https://$URL_CHATDIGI_BACKEND
+  Banco: chatdigi
+  Usuário BD: $USER_FAQ
+  Senha BD: $PASS_FAQ_USER
+  JWT Secret: $PASS_CHATDIGI_JWT
+  JWT Refresh Secret: $PASS_CHATDIGI_REFRESH
+  Redis: redis://redis:6379 (sem senha)
+
 ===================================================
                 COMANDOS ÚTEIS
 ===================================================
@@ -1485,6 +1698,9 @@ Ver logs N8N:
 Ver logs FAQ System:
   docker compose -f docker-compose.faq.yml logs -f
 
+Ver logs ChatDigi:
+  docker compose -f docker-compose.chatdigi.yml logs -f
+
 Parar todos os serviços:
   docker compose -f docker-compose.traefik-portainer.yml down
   docker compose -f docker-compose.minio.yml down
@@ -1492,7 +1708,8 @@ Parar todos os serviços:
   docker compose -f docker-compose.postgres.yml down
   docker compose -f docker-compose.rabbitmq.yml down
   docker compose -f docker-compose.n8n.yml down
-  docker compose -f docker-compose.faq.yml down
+docker compose -f docker-compose.faq.yml down
+docker compose -f docker-compose.chatdigi.yml down
 
 Reiniciar Traefik:
   docker compose -f docker-compose.traefik-portainer.yml restart traefik
@@ -1518,6 +1735,9 @@ Reiniciar N8N:
 Reiniciar FAQ System:
   docker compose -f docker-compose.faq.yml restart
 
+Reiniciar ChatDigi:
+  docker compose -f docker-compose.chatdigi.yml restart
+
 Atualizar imagens:
   docker compose -f docker-compose.traefik-portainer.yml pull && docker compose -f docker-compose.traefik-portainer.yml up -d
   docker compose -f docker-compose.minio.yml pull && docker compose -f docker-compose.minio.yml up -d
@@ -1525,7 +1745,8 @@ Atualizar imagens:
   docker compose -f docker-compose.postgres.yml pull && docker compose -f docker-compose.postgres.yml up -d
   docker compose -f docker-compose.rabbitmq.yml pull && docker compose -f docker-compose.rabbitmq.yml up -d
   docker compose -f docker-compose.n8n.yml pull && docker compose -f docker-compose.n8n.yml up -d
-  docker compose -f docker-compose.faq.yml pull && docker compose -f docker-compose.faq.yml up -d
+docker compose -f docker-compose.faq.yml pull && docker compose -f docker-compose.faq.yml up -d
+docker compose -f docker-compose.chatdigi.yml pull && docker compose -f docker-compose.chatdigi.yml up -d
 
 ===================================================
 EOF
@@ -1603,6 +1824,17 @@ msg "$BRANCO" "  🔑 Senha BD: $VERMELHO$PASS_FAQ_USER"
 msg "$BRANCO" "  🔗 Webhook Sync: $VERDE https://$N8N_WEBHOOK_HOST/webhook/sync-rag"
 echo ""
 
+msg "$BRANCO" "CHATDIGI SYSTEM:"
+msg "$BRANCO" "  🌐 Frontend: $VERDE https://$URL_CHATDIGI_FRONTEND"
+msg "$BRANCO" "  🔌 Backend API: $VERDE https://$URL_CHATDIGI_BACKEND"
+msg "$BRANCO" "  🗄️ Banco: $VERDE chatdigi"
+msg "$BRANCO" "  👤 Usuário BD: $VERDE$USER_FAQ"
+msg "$BRANCO" "  🔑 Senha BD: $VERMELHO$PASS_FAQ_USER"
+msg "$BRANCO" "  🔐 JWT Secret: $VERMELHO$PASS_CHATDIGI_JWT"
+msg "$BRANCO" "  🔄 JWT Refresh: $VERMELHO$PASS_CHATDIGI_REFRESH"
+msg "$BRANCO" "  🔴 Redis: $VERDE redis://redis:6379 (sem senha)"
+echo ""
+
 msg "$AMARELO" "📄 Credenciais salvas em:"
 msg "$BRANCO" "  • $PROJETO_DIR/credenciais.txt"
 echo ""
@@ -1615,6 +1847,7 @@ msg "$BRANCO" "  • $PROJETO_DIR/docker-compose.postgres.yml"
 msg "$BRANCO" "  • $PROJETO_DIR/docker-compose.rabbitmq.yml"
 msg "$BRANCO" "  • $PROJETO_DIR/docker-compose.n8n.yml"
 msg "$BRANCO" "  • $PROJETO_DIR/docker-compose.faq.yml"
+msg "$BRANCO" "  • $PROJETO_DIR/docker-compose.chatdigi.yml"
 msg "$BRANCO" "  • $PROJETO_DIR/credenciais.txt"
 msg "$BRANCO" "  • $PROJETO_DIR/letsencrypt/ - Certificados SSL"
 echo ""
@@ -1627,6 +1860,7 @@ msg "$BRANCO" "• docker-compose.postgres.yml - PostgreSQL"
 msg "$BRANCO" "• docker-compose.rabbitmq.yml - RabbitMQ"
 msg "$BRANCO" "• docker-compose.n8n.yml - N8N (Editor, Webhook, Worker)"
 msg "$BRANCO" "• docker-compose.faq.yml - FAQ System"
+msg "$BRANCO" "• docker-compose.chatdigi.yml - ChatDigi System"
 msg "$BRANCO" "• credenciais.txt - Todas as credenciais"
 echo ""
 msg "$AMARELO" "=== CONFIGURAÇÕES DE SISTEMA ==="
@@ -1653,6 +1887,7 @@ msg "$BRANCO" "• Ver logs PostgreSQL: cd $PROJETO_DIR && docker compose -f doc
 msg "$BRANCO" "• Ver logs RabbitMQ: cd $PROJETO_DIR && docker compose -f docker-compose.rabbitmq.yml logs -f"
 msg "$BRANCO" "• Ver logs N8N: cd $PROJETO_DIR && docker compose -f docker-compose.n8n.yml logs -f"
 msg "$BRANCO" "• Ver logs FAQ: cd $PROJETO_DIR && docker compose -f docker-compose.faq.yml logs -f"
+msg "$BRANCO" "• Ver logs ChatDigi: cd $PROJETO_DIR && docker compose -f docker-compose.chatdigi.yml logs -f"
 msg "$BRANCO" "• Reiniciar Traefik: cd $PROJETO_DIR && docker compose -f docker-compose.traefik-portainer.yml restart traefik"
 msg "$BRANCO" "• Reiniciar Portainer: cd $PROJETO_DIR && docker compose -f docker-compose.traefik-portainer.yml restart portainer"
 msg "$BRANCO" "• Reiniciar MinIO: cd $PROJETO_DIR && docker compose -f docker-compose.minio.yml restart"
@@ -1661,6 +1896,7 @@ msg "$BRANCO" "• Reiniciar PostgreSQL: cd $PROJETO_DIR && docker compose -f do
 msg "$BRANCO" "• Reiniciar RabbitMQ: cd $PROJETO_DIR && docker compose -f docker-compose.rabbitmq.yml restart"
 msg "$BRANCO" "• Reiniciar N8N: cd $PROJETO_DIR && docker compose -f docker-compose.n8n.yml restart"
 msg "$BRANCO" "• Reiniciar FAQ: cd $PROJETO_DIR && docker compose -f docker-compose.faq.yml restart"
+msg "$BRANCO" "• Reiniciar ChatDigi: cd $PROJETO_DIR && docker compose -f docker-compose.chatdigi.yml restart"
 echo ""
 
 msg "$AMARELO" "╔════════════════════════════════════════════════════════════════╗"
@@ -1681,6 +1917,8 @@ log_message "RabbitMQ: https://$URL_RABBITMQ"
 log_message "N8N Editor: https://$N8N_HOST"
 log_message "N8N Webhook: https://$N8N_WEBHOOK_HOST"
 log_message "FAQ System: https://$URL_FAQ"
+log_message "ChatDigi Frontend: https://$URL_CHATDIGI_FRONTEND"
+log_message "ChatDigi Backend: https://$URL_CHATDIGI_BACKEND"
 log_message "PostgreSQL: localhost:5432 (bancos: n8n_queue, chatdigi)"
 log_message "Fuso horário configurado: $(timedatectl show --property=Timezone --value)"
 log_message "Sincronização NTP: $(timedatectl show --property=NTPSynchronized --value)"
@@ -1701,4 +1939,5 @@ msg "$AMARELO" "• docker-compose.postgres.yml - PostgreSQL"
 msg "$AMARELO" "• docker-compose.rabbitmq.yml - RabbitMQ"
 msg "$AMARELO" "• docker-compose.n8n.yml - N8N"
 msg "$AMARELO" "• docker-compose.faq.yml - FAQ System"
+msg "$AMARELO" "• docker-compose.chatdigi.yml - ChatDigi System"
 msg "$VERDE" "✅ Arquivos preservados para manutenção"

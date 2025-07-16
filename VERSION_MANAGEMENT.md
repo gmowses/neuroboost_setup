@@ -123,6 +123,32 @@ bash <(curl -sSL setup.neuroboost.digital)
 
 Mantenha registro das versões dos componentes principais:
 
+### Versão 1.2.0
+- Traefik: v3.4.0
+- Portainer: latest
+- MinIO: latest
+- PostgreSQL: 14 + extensão vector
+- Redis: latest (compartilhado entre serviços)
+- RabbitMQ: management
+- N8N: latest
+- FAQ System: ghcr.io/gmowses/faq:v1
+- ChatDigi Backend: ghcr.io/gmowses/chatdigi-backend:v1
+- ChatDigi Frontend: ghcr.io/gmowses/chatdigi-frontend:v1
+- QR Generator: mowses1997/qr-generator:latest
+- **Novo:** Sistema completo de chat com IA
+- **Integração:** Redis compartilhado e usuário FAQ compartilhado
+
+### Versão 1.1.0
+- Traefik: v3.4.0
+- Portainer: latest
+- MinIO: latest
+- PostgreSQL: 14 + extensão vector
+- Redis: latest
+- RabbitMQ: management
+- N8N: latest
+- FAQ System: ghcr.io/gmowses/faq:v1
+- **Novo:** Suporte a embeddings e busca semântica
+
 ### Versão 1.0.0
 - Traefik: v3.4.0
 - Portainer: latest
