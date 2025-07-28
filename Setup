@@ -18,7 +18,7 @@
 ## ===================================================================================================
 
 ## Versão do script (SEMVER)
-VERSION="1.2.0"
+VERSION="1.2.1"
 
 ## Cores
 AMARELO="\e[33m"
@@ -547,6 +547,16 @@ fi
 PROJETO_DIR="/root/${NOME_INSTANCIA}"
 mkdir -p "$PROJETO_DIR"
 cd "$PROJETO_DIR"
+
+## Verifica e instala htpasswd se necessário
+if ! command -v htpasswd &> /dev/null; then
+    msg "$BRANCO" "🔧 Instalando htpasswd (apache2-utils)..."
+    exec_log "apt-get update -qq" "Atualizando lista de pacotes"
+    exec_log "apt-get install -y -qq apache2-utils" "Instalando apache2-utils para htpasswd"
+    msg "$VERDE" "✅ htpasswd instalado"
+else
+    msg "$VERDE" "✅ htpasswd já está disponível"
+fi
 
 ## Gera hash da senha do Traefik para Basic Auth
 TRAEFIK_AUTH=$(htpasswd -nb $USER_TRAEFIK $PASS_TRAEFIK | sed -e 's/\$/\$\$/g')
