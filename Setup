@@ -1038,6 +1038,9 @@ services:
     restart: unless-stopped
     
     environment:
+      # Whisper API
+      - WHISPER_URL=http://whisper-api:9000
+      
       # Banco de dados
       - DB_DIALECT=postgres
       - DB_HOST=postgres
@@ -1045,17 +1048,23 @@ services:
       - DB_NAME=chatdigi
       - DB_USER=${USER_FAQ}
       - DB_PASS=${PASS_FAQ_USER}
-      - DB_POOL_MAX=20
-      - DB_POOL_MIN=5
-      - DB_POOL_ACQUIRE=30000
-      - DB_POOL_IDLE=10000
+      - DB_TIMEZONE=America/Sao_Paulo
+      - DB_LOGGING=false
+      - DB_POOL_MAX=${DB_POOL_MAX:-100}
+      - DB_POOL_MIN=${DB_POOL_MIN:-15}
+      - DB_POOL_ACQUIRE=${DB_POOL_ACQUIRE:-30000}
+      - DB_POOL_IDLE=${DB_POOL_IDLE:-600000}
       
-      # Redis (usando o Redis existente sem senha)
+      # Redis
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - REDIS_PASSWORD=
+      - REDIS_SECRET_KEY=${REDIS_SECRET_KEY:-MULTI100}
       - REDIS_URI=redis://redis:6379
       - REDIS_URI_ACK=redis://redis:6379
+      - REDIS_URI_MSG_CONN=redis://redis:6379
+      - REDIS_OPT_LIMITER_MAX=${REDIS_OPT_LIMITER_MAX:-1}
+      - REDIS_OPT_LIMITER_DURATION=${REDIS_OPT_LIMITER_DURATION:-3000}
       
       # JWT
       - JWT_SECRET=${PASS_CHATDIGI_JWT}
@@ -1063,18 +1072,35 @@ services:
       
       # URLs
       - FRONTEND_URL=https://${URL_CHATDIGI_FRONTEND}
+      - BACKEND_URL=https://${URL_CHATDIGI_BACKEND}
       
       # Configurações da aplicação
       - NODE_ENV=production
       - PORT=8080
-      - MAX_FILE_SIZE=10485760
-      - WHATSAPP_TIMEOUT=30000
+      - MAX_FILE_SIZE=${MAX_FILE_SIZE:-50}
+      - WHATSAPP_TIMEOUT=${WHATSAPP_TIMEOUT:-30000}
       - TZ=America/Sao_Paulo
       
-      # Integrações (configurar posteriormente)
-      - OPENAI_API_KEY=
-      - GERENCIANET_CLIENT_ID=
-      - GERENCIANET_CLIENT_SECRET=
+      # Integrações
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - GERENCIANET_CLIENT_ID=${GERENCIANET_CLIENT_ID:-}
+      - GERENCIANET_CLIENT_SECRET=${GERENCIANET_CLIENT_SECRET:-}
+      - GERENCIANET_SANDBOX=${GERENCIANET_SANDBOX:-true}
+      - GERENCIANET_PIX_CERT=${GERENCIANET_PIX_CERT:-certificadoEfi}
+      
+      # Sentry (opcional)
+      - SENTRY_DSN=${SENTRY_DSN:-}
+      
+      # S3 / MinIO (enabled for MinIO storage)
+      - S3_STORAGE=DISABLE
+      - S3_PROVIDER=minio
+      - S3_ACCESS_KEY=chatdigiuser
+      - S3_SECRET_KEY=supersecretpassword
+      - S3_ENDPOINT=s3.digi.gmowses.cloud
+      - S3_PORT=443
+      - S3_REGION=us-east-1
+      - S3_USE_SSL=true
+      - S3_BUCKET=chatdigi-files
 
     volumes:
       - chatdigi_backend_uploads:/app/public
@@ -1106,6 +1132,9 @@ services:
     environment:
       - TZ=America/Sao_Paulo
       - REACT_APP_BACKEND_URL=https://${URL_CHATDIGI_BACKEND}
+      - REACT_APP_FRONTEND_URL=https://${URL_CHATDIGI_FRONTEND}
+      - REACT_APP_PRIMARY_COLOR=${REACT_APP_PRIMARY_COLOR:-#FF7A00}
+      - REACT_APP_SUPPORT_NUMBER=${REACT_APP_SUPPORT_NUMBER:-+55 11 99999-9999}
 
     networks:
       - ${NOME_INSTANCIA}_network
@@ -1129,6 +1158,14 @@ services:
       - FLASK_APP=app.py
       - TZ=America/Sao_Paulo
 
+    networks:
+      - ${NOME_INSTANCIA}_network
+
+  whisper-api:
+    image: mowses1997/whisper-api:latest
+    container_name: ${NOME_INSTANCIA}_whisper_api
+    restart: unless-stopped
+    
     networks:
       - ${NOME_INSTANCIA}_network
 
