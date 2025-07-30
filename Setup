@@ -18,7 +18,7 @@
 ## ===================================================================================================
 
 ## Versão do script (SEMVER)
-VERSION="2.1.8"
+VERSION="2.1.9"
 
 ## Cores
 AMARELO="\e[33m"
@@ -2002,8 +2002,8 @@ verificar_aws_cli() {
 
 ## Função para verificar S3
 verificar_s3() {
-    if aws s3 ls --endpoint-url "https://$S3_ENDPOINT" --profile idrivee2 > /dev/null 2>&1; then
-        if aws s3 ls "s3://$S3_BUCKET" --endpoint-url "https://$S3_ENDPOINT" --profile idrivee2 > /dev/null 2>&1; then
+    if aws s3 ls --endpoint-url https://$S3_ENDPOINT --profile idrivee2 > /dev/null 2>&1; then
+        if aws s3 ls "s3://$S3_BUCKET" --endpoint-url https://$S3_ENDPOINT --profile idrivee2 > /dev/null 2>&1; then
             msg "$VERDE" "✅ Bucket $S3_BUCKET confirmado"
         else
             msg "$VERMELHO" "❌ Bucket $S3_BUCKET não encontrado"
@@ -2105,7 +2105,7 @@ enviar_para_s3() {
     
     msg "$AMARELO" "☁️ Enviando backup para S3..."
     
-    if aws s3 cp "$arquivo_backup" "s3://$S3_BUCKET/$nome_arquivo" --endpoint-url "https://$S3_ENDPOINT" --profile idrivee2; then
+    if aws s3 cp "$arquivo_backup" "s3://$S3_BUCKET/$nome_arquivo" --endpoint-url https://$S3_ENDPOINT --profile idrivee2; then
         local tamanho=$(du -h "$arquivo_backup" | cut -f1)
         msg "$VERDE" "✅ Backup enviado para S3: $nome_arquivo ($tamanho)"
         rm -f "$arquivo_backup"
@@ -2121,13 +2121,13 @@ limpar_s3_antigos() {
     msg "$AMARELO" "🧹 Limpando backups antigos no S3..."
     
     local data_limite=$(date -d "$RETENCAO_DIAS days ago" +%Y%m%d)
-    local arquivos_s3=$(aws s3 ls "s3://$S3_BUCKET/" --endpoint-url "https://$S3_ENDPOINT" --profile idrivee2 | grep "backup_${NOME_INSTANCIA}_" | awk '{print $4}')
+    local arquivos_s3=$(aws s3 ls "s3://$S3_BUCKET/" --endpoint-url https://$S3_ENDPOINT --profile idrivee2 | grep "backup_${NOME_INSTANCIA}_" | awk '{print $4}')
     
     local removidos=0
     for arquivo in $arquivos_s3; do
         local data_arquivo=$(echo "$arquivo" | grep -o '[0-9]\{8\}_[0-9]\{6\}' | cut -d'_' -f1)
         if [ ! -z "$data_arquivo" ] && [ "$data_arquivo" -lt "$data_limite" ]; then
-            if aws s3 rm "s3://$S3_BUCKET/$arquivo" --endpoint-url "https://$S3_ENDPOINT" --profile idrivee2 > /dev/null 2>&1; then
+            if aws s3 rm "s3://$S3_BUCKET/$arquivo" --endpoint-url https://$S3_ENDPOINT --profile idrivee2 > /dev/null 2>&1; then
                 removidos=$((removidos + 1))
             fi
         fi
@@ -2253,13 +2253,13 @@ log_message "Credenciais AWS configuradas"
 
 ## Testa conectividade S3
 msg "$BRANCO" "🔗 Testando conectividade S3..."
-if aws s3 ls --endpoint-url "https://$S3_ENDPOINT" --profile idrivee2 > /dev/null 2>&1; then
+if aws s3 ls --endpoint-url https://$S3_ENDPOINT --profile idrivee2 > /dev/null 2>&1; then
     msg "$VERDE" "✅ Conectividade S3 confirmada"
     log_message "Conectividade S3 confirmada"
     
     ## Verifica bucket existente
     S3_BUCKET_FINAL="${NEUROBOOST_INSTANCE}"
-    if aws s3 ls "s3://$S3_BUCKET_FINAL" --endpoint-url "https://$S3_ENDPOINT" --profile idrivee2 > /dev/null 2>&1; then
+    if aws s3 ls "s3://$S3_BUCKET_FINAL" --endpoint-url https://$S3_ENDPOINT --profile idrivee2 > /dev/null 2>&1; then
         msg "$VERDE" "✅ Bucket $S3_BUCKET_FINAL confirmado"
         log_message "Bucket $S3_BUCKET_FINAL confirmado"
     else
@@ -2353,9 +2353,9 @@ main() {
     verificar_aws_cli
     
     msg "$BRANCO" "🔗 Testando conectividade S3..."
-    if aws s3 ls --endpoint-url "https://$S3_ENDPOINT" --profile idrivee2 > /dev/null 2>&1; then
+    if aws s3 ls --endpoint-url https://$S3_ENDPOINT --profile idrivee2 > /dev/null 2>&1; then
              msg "$VERDE" "✅ Conectividade S3 confirmada"
-             if aws s3 ls "s3://$S3_BUCKET" --endpoint-url "https://$S3_ENDPOINT" --profile idrivee2 > /dev/null 2>&1; then
+             if aws s3 ls "s3://$S3_BUCKET" --endpoint-url https://$S3_ENDPOINT --profile idrivee2 > /dev/null 2>&1; then
             msg "$VERDE" "✅ Bucket $S3_BUCKET confirmado"
         else
             msg "$VERMELHO" "❌ Bucket $S3_BUCKET não encontrado"
@@ -2516,7 +2516,7 @@ listar_backups() {
     
     msg "$AMARELO" "📋 Listando backups disponíveis para $nome_instancia..."
     
-    local backups=$(aws s3 ls "s3://$S3_BUCKET/" --endpoint-url "https://$S3_ENDPOINT" --profile idrivee2 | grep "backup_${nome_instancia}_" | awk '{print $4}' | sort -r)
+    local backups=$(aws s3 ls "s3://$S3_BUCKET/" --endpoint-url https://$S3_ENDPOINT --profile idrivee2 | grep "backup_${nome_instancia}_" | awk '{print $4}' | sort -r)
     
     if [ -z "$backups" ]; then
         msg "$VERMELHO" "❌ Nenhum backup encontrado para a instância $nome_instancia"
@@ -2533,7 +2533,7 @@ listar_backups() {
     for backup in $backups; do
         local data_backup=$(echo "$backup" | grep -o '[0-9]\{8\}_[0-9]\{6\}')
         local data_formatada=$(echo "$data_backup" | sed 's/\([0-9]\{4\}\)\([0-9]\{2\}\)\([0-9]\{2\}\)_\([0-9]\{2\}\)\([0-9]\{2\}\)\([0-9]\{2\}\)/\3\/\2\/\1 \4:\5:\6/')
-        local tamanho=$(aws s3 ls "s3://$S3_BUCKET/$backup" --endpoint-url "https://$S3_ENDPOINT" --profile idrivee2 --human-readable | awk '{print $3" "$4}')
+        local tamanho=$(aws s3 ls "s3://$S3_BUCKET/$backup" --endpoint-url https://$S3_ENDPOINT --profile idrivee2 --human-readable | awk '{print $3" "$4}')
         
         printf "   %2d) %s - %s (%s)\n" "$contador" "$data_formatada" "$backup" "$tamanho"
         lista_backups[$contador]="$backup"
@@ -2568,7 +2568,7 @@ restaurar_backup() {
     msg "$AMARELO" "⬇️ Baixando backup do S3..."
     mkdir -p "$temp_dir"
     
-    if aws s3 cp "s3://$S3_BUCKET/$arquivo_backup" "$temp_dir/$arquivo_backup" --endpoint-url "https://$S3_ENDPOINT" --profile idrivee2; then
+    if aws s3 cp "s3://$S3_BUCKET/$arquivo_backup" "$temp_dir/$arquivo_backup" --endpoint-url https://$S3_ENDPOINT --profile idrivee2; then
         msg "$VERDE" "✅ Backup baixado com sucesso"
     else
         msg "$VERMELHO" "❌ Falha no download do backup"
