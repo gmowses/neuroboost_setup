@@ -2798,6 +2798,165 @@ else
     fi
 fi
 
+## Cria script de limpeza do sistema
+msg "$BRANCO" "🧹 Criando script de limpeza do sistema..."
+log_message "Criando script de limpeza do sistema"
+
+cat > "$PROJETO_DIR/scripts/system_cleanup.sh" << 'CLEANUP_SYSTEM_SCRIPT_EOF'
+#!/bin/bash
+
+## ===================================================================================================
+##                           SCRIPT DE LIMPEZA DO SISTEMA - NEUROBOOST DIGITAL
+##                         LIMPEZA AUTOMÁTICA PARA EVITAR ACÚMULO DE ARQUIVOS
+## ===================================================================================================
+
+## Cores para output
+AMARELO="\e[33m"
+VERDE="\e[32m"
+VERMELHO="\e[31m"
+BRANCO="\e[97m"
+AZUL="\e[34m"
+RESET="\e[0m"
+
+## Configurações
+LOG_FILE="/var/log/neuroboost_cleanup.log"
+DATA_CLEANUP=$(date +%Y%m%d_%H%M%S)
+
+## Função para logging
+log_message() {
+    local message="$1"
+    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+    echo "[$timestamp] $message" >> "$LOG_FILE"
+}
+
+## Função para exibir mensagens coloridas e logar
+msg() {
+    local cor=$1
+    local texto=$2
+    local clean_text=$(echo -e "${texto}" | sed 's/\x1b\[[0-9;]*m//g')
+    echo -e "${cor}${texto}${RESET}"
+    log_message "$clean_text"
+}
+
+## Função para executar comandos com log
+exec_cleanup() {
+    local cmd="$1"
+    local description="$2"
+    
+    log_message "EXECUTANDO: $cmd"
+    log_message "DESCRIÇÃO: $description"
+    
+    local output
+    local exit_code
+    
+    output=$(eval "$cmd" 2>&1)
+    exit_code=$?
+    
+    if [ -n "$output" ]; then
+        log_message "SAÍDA: $output"
+    fi
+    log_message "CÓDIGO DE SAÍDA: $exit_code"
+    
+    return $exit_code
+}
+
+## Função principal de limpeza
+main() {
+    msg "$AMARELO" "╔════════════════════════════════════════════════════════════════╗"
+    msg "$AMARELO" "║                    LIMPEZA DO SISTEMA - NEUROBOOST             ║"
+    msg "$AMARELO" "╚════════════════════════════════════════════════════════════════╝"
+    echo ""
+    
+    log_message "Iniciando limpeza do sistema - $DATA_CLEANUP"
+    
+    ## 1. Limpeza de pacotes APT
+    msg "$BRANCO" "📦 Limpando cache de pacotes APT..."
+    exec_cleanup "apt-get autoremove -y" "Removendo pacotes órfãos"
+    exec_cleanup "apt-get autoclean" "Limpando cache de pacotes"
+    exec_cleanup "apt-get clean" "Limpando cache completo"
+    
+    ## 2. Limpeza de logs antigos
+    msg "$BRANCO" "📋 Limpando logs antigos..."
+    exec_cleanup "journalctl --vacuum-time=7d" "Limpando logs do systemd (7 dias)"
+    exec_cleanup "find /var/log -name '*.log' -type f -mtime +7 -delete" "Removendo logs antigos (7+ dias)"
+    exec_cleanup "find /var/log -name '*.gz' -type f -mtime +7 -delete" "Removendo logs comprimidos antigos"
+    
+    ## 3. Limpeza de arquivos temporários
+    msg "$BRANCO" "🗂️ Limpando arquivos temporários..."
+    exec_cleanup "find /tmp -type f -atime +3 -delete" "Removendo arquivos temporários antigos"
+    exec_cleanup "find /var/tmp -type f -atime +3 -delete" "Removendo arquivos temporários do sistema"
+    
+    ## 4. Limpeza do Docker (se disponível)
+    if command -v docker &> /dev/null; then
+        msg "$BRANCO" "🐳 Limpando recursos do Docker..."
+        exec_cleanup "docker system prune -f" "Removendo containers, redes e imagens não utilizadas"
+        exec_cleanup "docker volume prune -f" "Removendo volumes órfãos"
+        exec_cleanup "docker image prune -a -f" "Removendo imagens não utilizadas"
+    fi
+    
+    ## 5. Limpeza de cache do usuário
+    msg "$BRANCO" "💾 Limpando caches do sistema..."
+    exec_cleanup "find /home -name '.cache' -type d -exec rm -rf {}/pip \;" "Limpando cache pip"
+    exec_cleanup "find /home -name '.cache' -type d -exec rm -rf {}/npm \;" "Limpando cache npm"
+    exec_cleanup "find /root -name '.cache' -type d -exec rm -rf {}/pip \;" "Limpando cache pip do root"
+    exec_cleanup "find /root -name '.cache' -type d -exec rm -rf {}/npm \;" "Limpando cache npm do root"
+    
+    ## 6. Limpeza de arquivos de backup antigos locais
+    msg "$BRANCO" "💿 Limpando backups locais antigos..."
+    exec_cleanup "find /tmp -name '*backup*' -type f -mtime +1 -delete" "Removendo backups temporários antigos"
+    
+    ## 7. Verificação de espaço em disco
+    msg "$BRANCO" "📊 Verificando espaço em disco após limpeza..."
+    local disk_usage=$(df -h / | awk 'NR==2 {print $5}' | sed 's/%//')
+    local disk_available=$(df -h / | awk 'NR==2 {print $4}')
+    
+    msg "$VERDE" "✅ Limpeza concluída!"
+    msg "$BRANCO" "📊 Uso do disco: ${disk_usage}% - Disponível: ${disk_available}"
+    
+    log_message "Limpeza do sistema concluída - Uso do disco: ${disk_usage}%"
+    
+    ## Alerta se uso do disco ainda estiver alto
+    if [ "$disk_usage" -gt 85 ]; then
+        msg "$VERMELHO" "⚠️ ATENÇÃO: Uso do disco ainda está alto (${disk_usage}%)"
+        msg "$AMARELO" "💡 Considere verificar arquivos grandes manualmente"
+        log_message "AVISO: Uso do disco alto após limpeza: ${disk_usage}%"
+    fi
+    
+    echo ""
+}
+
+main "$@"
+CLEANUP_SYSTEM_SCRIPT_EOF
+
+## Torna o script de limpeza executável
+chmod +x "$PROJETO_DIR/scripts/system_cleanup.sh"
+msg "$VERDE" "✅ Script de limpeza do sistema criado: $PROJETO_DIR/scripts/system_cleanup.sh"
+log_message "Script de limpeza do sistema criado com sucesso"
+
+## Configura crontab para limpeza automática do sistema (semanal)
+msg "$BRANCO" "🧹 Configurando limpeza automática do sistema (crontab)..."
+log_message "Configurando crontab para limpeza automática do sistema"
+
+## Entrada do crontab para limpeza a cada 7 dias (às 03:00)
+CLEANUP_CRONTAB_ENTRY="0 3 */7 * * $PROJETO_DIR/scripts/system_cleanup.sh >> /var/log/neuroboost_cleanup.log 2>&1"
+
+## Verifica se entrada de limpeza já existe
+if crontab -l 2>/dev/null | grep -q "$PROJETO_DIR/scripts/system_cleanup.sh"; then
+    msg "$VERDE" "✅ Limpeza automática do sistema já está configurada"
+    log_message "Limpeza automática do sistema já estava configurada"
+else
+    ## Adiciona entrada de limpeza ao crontab
+    (crontab -l 2>/dev/null; echo "$CLEANUP_CRONTAB_ENTRY") | crontab -
+    
+    if [ $? -eq 0 ]; then
+        msg "$VERDE" "✅ Limpeza automática do sistema configurada (a cada 7 dias às 03:00)"
+        log_message "Limpeza automática do sistema configurada no crontab"
+    else
+        msg "$AMARELO" "⚠️ Falha ao configurar limpeza automática do sistema"
+        log_message "AVISO: Falha ao configurar crontab para limpeza"
+    fi
+fi
+
 ## Cria arquivo de instruções de backup
 cat > "$PROJETO_DIR/backup_instructions.txt" << EOF
 ===================================================
@@ -2826,6 +2985,7 @@ SCRIPTS DISPONÍVEIS:
 • Teste S3: $PROJETO_DIR/scripts/test_s3.sh
 • Cleanup: $PROJETO_DIR/scripts/cleanup.sh
 • Restore: $PROJETO_DIR/scripts/restore.sh
+• Limpeza Sistema: $PROJETO_DIR/scripts/system_cleanup.sh
 
 MONITORAMENTO:
 • Ver logs: tail -f /var/log/neuroboost_backup.log
@@ -2839,6 +2999,15 @@ COMANDOS ÚTEIS:
 • Testar S3: sudo $PROJETO_DIR/scripts/test_s3.sh $NOME_INSTANCIA
 • Listar/Restaurar backups: sudo $PROJETO_DIR/scripts/restore.sh $NOME_INSTANCIA
 • Remover instalação: sudo $PROJETO_DIR/scripts/cleanup.sh $NOME_INSTANCIA
+• Limpeza manual do sistema: sudo $PROJETO_DIR/scripts/system_cleanup.sh
+• Ver logs de limpeza: tail -f /var/log/neuroboost_cleanup.log
+
+LIMPEZA AUTOMÁTICA DO SISTEMA:
+• Configurada para executar a cada 7 dias (às 03:00)
+• Remove pacotes órfãos, logs antigos, arquivos temporários
+• Limpa cache do Docker, pip, npm e outros
+• Logs salvos em: /var/log/neuroboost_cleanup.log
+• Alerta se uso do disco > 85%
 
 ===================================================
 EOF
