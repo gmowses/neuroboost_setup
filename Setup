@@ -728,7 +728,7 @@ version: '3.8'
 
 services:
   postgres:
-    image: postgres:14
+    image: pgvector/pgvector:pg14
     container_name: ${NOME_INSTANCIA}_postgres
     restart: unless-stopped
     command: >
@@ -1360,138 +1360,44 @@ else
     log_message "Erro ao configurar permissões do usuário FAQ"
 fi
 
-# Cria script SQL temporário para as tabelas
-msg "$AMARELO" "📝 Criando estrutura das tabelas FAQ..."
-cat > /tmp/chatdigi_schema.sql << 'EOSQL'
--- Script de estrutura para o sistema FAQ (sem dados de exemplo)
--- Assume que a tabela Users já existe
+# Cria extensão vector para embeddings
+msg "$AMARELO" "📝 Criando extensão vector para embeddings..."
 
--- Criar extensão vector para embeddings
-CREATE EXTENSION IF NOT EXISTS vector;
+# Aguarda PostgreSQL estar completamente pronto
+msg "$AMARELO" "⏳ Aguardando PostgreSQL ficar completamente pronto..."
+tentativas=0
+max_tentativas=10
+while [ $tentativas -lt $max_tentativas ]; do
+    if docker exec ${NOME_INSTANCIA}_postgres pg_isready -U postgres > /dev/null 2>&1; then
+        msg "$VERDE" "✅ PostgreSQL está pronto"
+        break
+    fi
+    msg "$AMARELO" "⏳ PostgreSQL ainda não está pronto... aguardando 5 segundos"
+    sleep 5
+    tentativas=$((tentativas + 1))
+done
 
--- Criar tabela documents para RAG/embeddings
-CREATE TABLE IF NOT EXISTS documents (
-    id BIGSERIAL PRIMARY KEY,
-    content TEXT,
-    metadata JSONB,
-    embedding vector(1536),
-    titulo TEXT
-);
-
--- Criar tabela categoria
-CREATE TABLE categoria (
-    id SERIAL PRIMARY KEY,
-    nome VARCHAR(255) NOT NULL UNIQUE,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
--- Criar tabela sub_categoria
-CREATE TABLE sub_categoria (
-    id SERIAL PRIMARY KEY,
-    nome VARCHAR(255) NOT NULL,
-    categoria_id INTEGER NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (categoria_id) REFERENCES categoria(id) ON DELETE CASCADE,
-    UNIQUE(nome, categoria_id)
-);
-
--- Criar tabela faq
-CREATE TABLE faq (
-    id SERIAL PRIMARY KEY,
-    pergunta TEXT NOT NULL,
-    resposta TEXT NOT NULL,
-    categoria_id INTEGER NOT NULL,
-    sub_categoria_id INTEGER,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (categoria_id) REFERENCES categoria(id) ON DELETE CASCADE,
-    FOREIGN KEY (sub_categoria_id) REFERENCES sub_categoria(id) ON DELETE SET NULL
-);
-
--- Índices para performance
-CREATE INDEX idx_faq_categoria ON faq(categoria_id);
-CREATE INDEX idx_faq_sub_categoria ON faq(sub_categoria_id);
-CREATE INDEX idx_sub_categoria_categoria ON sub_categoria(categoria_id);
-
--- Índice de texto completo para busca
-CREATE INDEX idx_faq_search ON faq USING gin(to_tsvector('portuguese', pergunta || ' ' || resposta));
-
--- Função para atualizar updated_at
-CREATE OR REPLACE FUNCTION update_updated_at_column()
-RETURNS TRIGGER AS $$
-BEGIN
-    NEW.updated_at = CURRENT_TIMESTAMP;
-    RETURN NEW;
-END;
-$$ language 'plpgsql';
-
--- Trigger para atualizar updated_at na tabela faq
-CREATE TRIGGER update_faq_updated_at 
-    BEFORE UPDATE ON faq 
-    FOR EACH ROW 
-    EXECUTE FUNCTION update_updated_at_column();
-
--- Função para busca semântica com embeddings
-CREATE OR REPLACE FUNCTION match_documents (
-  query_embedding vector(1536),
-  match_count int DEFAULT NULL,
-  filter jsonb DEFAULT '{}'
-)
-RETURNS TABLE (
-  id bigint,
-  content text,
-  metadata jsonb,
-  similarity float
-)
-LANGUAGE plpgsql
-AS $function$
-#variable_conflict use_column
-BEGIN
-  RETURN QUERY
-  SELECT
-    id,
-    content,
-    metadata,
-    1 - (documents.embedding <=> query_embedding) AS similarity
-  FROM documents
-  WHERE metadata @> filter
-  ORDER BY documents.embedding <=> query_embedding
-  LIMIT match_count;
-END;
-$function$;
-
--- Grants para usuários (ajustar conforme necessário)
-GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO postgres;
-GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO postgres;
-EOSQL
-
-# Executa o script SQL no banco chatdigi
-if exec_log "docker exec -i ${NOME_INSTANCIA}_postgres psql -U postgres -d chatdigi < /tmp/chatdigi_schema.sql" "Criando tabelas FAQ"; then
-    msg "$VERDE" "✅ Tabelas FAQ criadas com sucesso"
-    log_message "Tabelas FAQ criadas com sucesso"
+if [ $tentativas -eq $max_tentativas ]; then
+    msg "$VERMELHO" "❌ PostgreSQL não ficou pronto após $max_tentativas tentativas"
+    log_message "ERRO: PostgreSQL não ficou pronto para criar extensão vector"
 else
-    msg "$AMARELO" "⚠️ Erro ao criar tabelas FAQ ou já existem"
-    log_message "Erro ao criar tabelas FAQ ou já existem"
+    # Cria a extensão vector (agora disponível na imagem pgvector/pgvector:pg14)
+    msg "$AMARELO" "🔧 Criando extensão vector no banco chatdigi..."
+    if docker exec ${NOME_INSTANCIA}_postgres psql -U postgres -d chatdigi -c 'CREATE EXTENSION IF NOT EXISTS vector;' > /dev/null 2>&1; then
+        msg "$VERDE" "✅ Extensão vector criada com sucesso"
+        log_message "Extensão vector criada com sucesso"
+    else
+        msg "$AMARELO" "⚠️ Erro ao criar extensão vector"
+        msg "$AMARELO" "ℹ️  Verificando se a extensão já existe..."
+        if docker exec ${NOME_INSTANCIA}_postgres psql -U postgres -d chatdigi -c "SELECT 1 FROM pg_extension WHERE extname = 'vector';" | grep -q "1 row"; then
+            msg "$VERDE" "✅ Extensão vector já estava instalada"
+            log_message "Extensão vector já estava instalada"
+        else
+            msg "$AMARELO" "⚠️ Extensão vector não pôde ser criada, mas isso pode não afetar o funcionamento"
+            log_message "Aviso: Extensão vector não foi criada"
+        fi
+    fi
 fi
-
-# Configura permissões específicas nas tabelas para o usuário FAQ
-msg "$AMARELO" "🔐 Configurando permissões específicas nas tabelas..."
-GRANT_TABLE_PERMISSIONS_SQL="
-GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO ${USER_FAQ};
-GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO ${USER_FAQ};
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO ${USER_FAQ};
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO ${USER_FAQ};
-"
-if exec_log "docker exec ${NOME_INSTANCIA}_postgres psql -U postgres -d chatdigi -c \"${GRANT_TABLE_PERMISSIONS_SQL}\"" "Configurando permissões específicas"; then
-    msg "$VERDE" "✅ Permissões específicas configuradas"
-    log_message "Permissões específicas nas tabelas configuradas com sucesso"
-else
-    msg "$AMARELO" "⚠️ Erro ao configurar permissões específicas"
-    log_message "Erro ao configurar permissões específicas nas tabelas"
-fi
-
-# Remove arquivo temporário
-rm -f /tmp/chatdigi_schema.sql
 
 # Inicia RabbitMQ
 msg "$AMARELO" "🐰 Iniciando RabbitMQ..."
@@ -1946,6 +1852,884 @@ msg "$BRANCO" "• Reiniciar RabbitMQ: cd $PROJETO_DIR && docker compose -f dock
 msg "$BRANCO" "• Reiniciar N8N: cd $PROJETO_DIR && docker compose -f docker-compose.n8n.yml restart"
 msg "$BRANCO" "• Reiniciar FAQ: cd $PROJETO_DIR && docker compose -f docker-compose.faq.yml restart"
 msg "$BRANCO" "• Reiniciar ChatDigi: cd $PROJETO_DIR && docker compose -f docker-compose.chatdigi.yml restart"
+echo ""
+
+## ===================================================================================================
+##                                    CONFIGURAÇÃO DE BACKUP
+## ===================================================================================================
+
+msg "$AMARELO" "=== CONFIGURANDO SISTEMA DE BACKUP ==="
+echo ""
+
+## Configurações do S3 (personalizáveis)
+S3_ENDPOINT="${S3_ENDPOINT:-j1n5.da.idrivee2-20.com}"
+S3_ACCESS_KEY="${S3_ACCESS_KEY:-vrFWzHutAsAMf29xhQJA}"
+S3_SECRET_KEY="${S3_SECRET_KEY:-VqtYDE6pZcY0FEB11OHWaETPywP9UQPzPAtsemjv}"
+S3_BUCKET="${NEUROBOOST_INSTANCE}"
+S3_REGION="${S3_REGION:-us-east-1}"
+BACKUP_INTERVAL_HOURS="${BACKUP_INTERVAL_HOURS:-24}"  # Intervalo entre backups em horas
+BACKUP_RETENTION_DAYS="${BACKUP_RETENTION_DAYS:-3}"  # Retenção de backups no S3 em dias
+
+msg "$BRANCO" "📦 Criando pasta de scripts e backup automático..."
+log_message "Criando pasta de scripts e backup automático"
+
+## Cria pasta de scripts
+mkdir -p "$PROJETO_DIR/scripts"
+
+## Cria script de backup
+cat > "$PROJETO_DIR/scripts/backup.sh" << 'BACKUP_SCRIPT_EOF'
+#!/bin/bash
+
+## ===================================================================================================
+##                           SCRIPT DE BACKUP - NEUROBOOST DIGITAL
+##                         BACKUP COMPLETO DE VOLUMES, DADOS E CONFIGURAÇÕES
+## ===================================================================================================
+
+## Versão do script
+VERSION="1.0.0"
+
+## Cores para output
+AMARELO="\e[33m"
+VERDE="\e[32m"
+VERMELHO="\e[31m"
+BRANCO="\e[97m"
+AZUL="\e[34m"
+RESET="\e[0m"
+
+## Configurações padrão
+DATA_BACKUP=$(date +%Y%m%d_%H%M%S)
+LOG_FILE="backup_${DATA_BACKUP}.log"
+COMPRESSAO_NIVEL=6
+MANTER_BACKUPS=7  # Manter últimos 7 backups
+
+## Configurações do S3
+S3_ENDPOINT="$S3_ENDPOINT"
+S3_ACCESS_KEY="$S3_ACCESS_KEY"
+S3_SECRET_KEY="$S3_SECRET_KEY"
+S3_BUCKET="${NOME_INSTANCIA}-backups"
+S3_REGION="$S3_REGION"
+RETENCAO_DIAS=$BACKUP_RETENTION_DAYS  # Manter backups por X dias no S3
+
+## Função para logging
+log_message() {
+    local message="$1"
+    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+    echo "[$timestamp] $message" >> "$LOG_FILE"
+}
+
+## Função para exibir mensagens coloridas e logar
+msg() {
+    local cor=$1
+    local texto=$2
+    local clean_text=$(echo -e "${texto}" | sed 's/\x1b\[[0-9;]*m//g')
+    echo -e "${cor}${texto}${RESET}"
+    log_message "$clean_text"
+}
+
+## Função para verificar e instalar AWS CLI
+verificar_aws_cli() {
+    if ! command -v aws &> /dev/null; then
+        msg "$AMARELO" "📦 AWS CLI não encontrado, instalando..."
+        
+        if [[ $(uname -m) == "arm64" ]]; then
+            ARCH="aarch64"
+        else
+            ARCH="x86_64"
+        fi
+        
+        curl -s "https://awscli.amazonaws.com/awscli-exe-linux-${ARCH}.zip" -o "/tmp/awscliv2.zip"
+        unzip -q "/tmp/awscliv2.zip" -d "/tmp/"
+        /tmp/aws/install --update > /dev/null 2>&1
+        rm -rf /tmp/aws /tmp/awscliv2.zip
+        
+        if command -v aws &> /dev/null; then
+            msg "$VERDE" "✅ AWS CLI instalado com sucesso"
+        else
+            msg "$VERMELHO" "❌ Falha na instalação do AWS CLI"
+            exit 1
+        fi
+    fi
+}
+
+## Função para configurar credenciais AWS
+configurar_aws() {
+    export AWS_ACCESS_KEY_ID="$S3_ACCESS_KEY"
+    export AWS_SECRET_ACCESS_KEY="$S3_SECRET_KEY"
+    export AWS_DEFAULT_REGION="$S3_REGION"
+    aws configure set default.s3.endpoint_url "https://$S3_ENDPOINT"
+    aws configure set default.s3.signature_version s3v4
+}
+
+## Função para verificar S3
+verificar_s3() {
+    if aws s3 ls --endpoint-url "https://$S3_ENDPOINT" > /dev/null 2>&1; then
+        if ! aws s3 ls "s3://$S3_BUCKET" --endpoint-url "https://$S3_ENDPOINT" > /dev/null 2>&1; then
+            aws s3 mb "s3://$S3_BUCKET" --endpoint-url "https://$S3_ENDPOINT"
+        fi
+    else
+        msg "$VERMELHO" "❌ Falha na conectividade S3"
+        exit 1
+    fi
+}
+
+## Função para backup de volumes
+backup_volumes() {
+    local backup_dir=$1
+    local volumes_dir="$backup_dir/volumes"
+    
+    msg "$AMARELO" "💾 Iniciando backup dos volumes Docker..."
+    
+    local volumes=(
+        "${NOME_INSTANCIA}_postgres_data"
+        "${NOME_INSTANCIA}_minio_data"
+        "${NOME_INSTANCIA}_redis_data"
+        "${NOME_INSTANCIA}_rabbitmq_data"
+        "${NOME_INSTANCIA}_n8n_data"
+        "${NOME_INSTANCIA}_faq_logs"
+        "${NOME_INSTANCIA}_chatdigi_backend_uploads"
+        "${NOME_INSTANCIA}_chatdigi_backend_logs"
+    )
+    
+    for volume in "${volumes[@]}"; do
+        if docker volume inspect "$volume" &> /dev/null; then
+            msg "$AZUL" "  📦 Fazendo backup do volume: $volume"
+            docker run --rm -v "$volume:/source:ro" -v "$volumes_dir:/backup" alpine:latest tar czf "/backup/${volume}.tar.gz" -C /source .
+            if [ $? -eq 0 ]; then
+                msg "$VERDE" "    ✅ Volume $volume - backup concluído"
+            fi
+        fi
+    done
+}
+
+## Função para backup dos bancos
+backup_databases() {
+    local backup_dir=$1
+    local db_dir="$backup_dir/databases"
+    
+    msg "$AMARELO" "🗄️ Iniciando backup dos bancos de dados..."
+    
+    if docker ps | grep -q "${NOME_INSTANCIA}_postgres"; then
+        local databases=("postgres" "n8n_queue" "chatdigi")
+        
+        for db in "${databases[@]}"; do
+            msg "$AZUL" "  🗃️ Fazendo backup do banco: $db"
+            if docker exec "${NOME_INSTANCIA}_postgres" pg_dump -U postgres "$db" > "$db_dir/${db}_${DATA_BACKUP}.sql"; then
+                gzip "$db_dir/${db}_${DATA_BACKUP}.sql"
+                msg "$VERDE" "    ✅ Banco $db - backup concluído"
+            fi
+        done
+        
+        if docker exec "${NOME_INSTANCIA}_postgres" pg_dumpall -U postgres > "$db_dir/postgresql_global_${DATA_BACKUP}.sql"; then
+            gzip "$db_dir/postgresql_global_${DATA_BACKUP}.sql"
+            msg "$VERDE" "    ✅ Backup global PostgreSQL concluído"
+        fi
+    fi
+}
+
+## Função para backup das configurações
+backup_configs() {
+    local backup_dir=$1
+    local config_dir="$backup_dir/configs"
+    
+    msg "$AMARELO" "⚙️ Iniciando backup das configurações..."
+    
+    local config_files=(
+        "docker-compose.traefik-portainer.yml"
+        "docker-compose.minio.yml"
+        "docker-compose.redis.yml"
+        "docker-compose.postgres.yml"
+        "docker-compose.rabbitmq.yml"
+        "docker-compose.n8n.yml"
+        "docker-compose.faq.yml"
+        "docker-compose.chatdigi.yml"
+        "credenciais.txt"
+        "backup.sh"
+    )
+    
+    for file in "${config_files[@]}"; do
+        if [ -f "$file" ]; then
+            cp "$file" "$config_dir/"
+            msg "$VERDE" "  ✅ Arquivo copiado: $file"
+        fi
+    done
+}
+
+## Função para enviar para S3
+enviar_para_s3() {
+    local arquivo_backup=$1
+    local nome_arquivo=$(basename "$arquivo_backup")
+    
+    msg "$AMARELO" "☁️ Enviando backup para S3..."
+    
+    if aws s3 cp "$arquivo_backup" "s3://$S3_BUCKET/$nome_arquivo" --endpoint-url "https://$S3_ENDPOINT"; then
+        local tamanho=$(du -h "$arquivo_backup" | cut -f1)
+        msg "$VERDE" "✅ Backup enviado para S3: $nome_arquivo ($tamanho)"
+        rm -f "$arquivo_backup"
+        return 0
+    else
+        msg "$VERMELHO" "❌ Falha no envio para S3"
+        return 1
+    fi
+}
+
+## Função para limpar backups antigos no S3
+limpar_s3_antigos() {
+    msg "$AMARELO" "🧹 Limpando backups antigos no S3..."
+    
+    local data_limite=$(date -d "$RETENCAO_DIAS days ago" +%Y%m%d)
+    local arquivos_s3=$(aws s3 ls "s3://$S3_BUCKET/" --endpoint-url "https://$S3_ENDPOINT" | grep "backup_${NOME_INSTANCIA}_" | awk '{print $4}')
+    
+    local removidos=0
+    for arquivo in $arquivos_s3; do
+        local data_arquivo=$(echo "$arquivo" | grep -o '[0-9]\{8\}_[0-9]\{6\}' | cut -d'_' -f1)
+        if [ ! -z "$data_arquivo" ] && [ "$data_arquivo" -lt "$data_limite" ]; then
+            if aws s3 rm "s3://$S3_BUCKET/$arquivo" --endpoint-url "https://$S3_ENDPOINT" > /dev/null 2>&1; then
+                removidos=$((removidos + 1))
+            fi
+        fi
+    done
+    
+    if [ $removidos -eq 0 ]; then
+        msg "$VERDE" "✅ Nenhum arquivo antigo encontrado para remoção"
+    else
+        msg "$VERDE" "✅ $removidos arquivo(s) antigo(s) removido(s) do S3"
+    fi
+}
+
+## Função principal
+main() {
+    NOME_INSTANCIA=${1:-""}
+    DESTINO_BACKUP=${2:-"/tmp/neuroboost_backup"}
+    
+    if [ -z "$NOME_INSTANCIA" ]; then
+        echo "❌ Nome da instância não fornecido!"
+        echo "Uso: $0 <NOME_INSTANCIA>"
+        exit 1
+    fi
+    
+    verificar_aws_cli
+    configurar_aws
+    verificar_s3
+    
+    mkdir -p "$DESTINO_BACKUP"
+    local backup_dir="$DESTINO_BACKUP/backup_${NOME_INSTANCIA}_${DATA_BACKUP}"
+    
+    mkdir -p "$backup_dir/volumes"
+    mkdir -p "$backup_dir/databases"
+    mkdir -p "$backup_dir/configs"
+    
+    backup_volumes "$backup_dir"
+    backup_databases "$backup_dir"
+    backup_configs "$backup_dir"
+    
+    cd "$DESTINO_BACKUP"
+    tar czf "backup_${NOME_INSTANCIA}_${DATA_BACKUP}.tar.gz" "backup_${NOME_INSTANCIA}_${DATA_BACKUP}"
+    
+    if [ $? -eq 0 ]; then
+        rm -rf "backup_${NOME_INSTANCIA}_${DATA_BACKUP}"
+        local arquivo_backup="$DESTINO_BACKUP/backup_${NOME_INSTANCIA}_${DATA_BACKUP}.tar.gz"
+        
+        if tar tzf "$arquivo_backup" > /dev/null 2>&1; then
+            if enviar_para_s3 "$arquivo_backup"; then
+                limpar_s3_antigos
+                msg "$VERDE" "✅ Backup concluído com sucesso!"
+                exit 0
+            fi
+        fi
+    fi
+    
+    msg "$VERMELHO" "❌ Backup falhou!"
+    exit 1
+}
+
+main "$@"
+BACKUP_SCRIPT_EOF
+
+## Torna o script executável
+chmod +x "$PROJETO_DIR/scripts/backup.sh"
+msg "$VERDE" "✅ Script de backup criado: $PROJETO_DIR/scripts/backup.sh"
+log_message "Script de backup criado com sucesso"
+
+## Instala AWS CLI se necessário
+msg "$BRANCO" "🔧 Verificando AWS CLI..."
+if ! command -v aws &> /dev/null; then
+    msg "$AMARELO" "📦 Instalando AWS CLI..."
+    
+    if [[ $(uname -m) == "arm64" ]]; then
+        ARCH="aarch64"
+    else
+        ARCH="x86_64"
+    fi
+    
+    curl -s "https://awscli.amazonaws.com/awscli-exe-linux-${ARCH}.zip" -o "/tmp/awscliv2.zip"
+    unzip -q "/tmp/awscliv2.zip" -d "/tmp/"
+    /tmp/aws/install --update > /dev/null 2>&1
+    rm -rf /tmp/aws /tmp/awscliv2.zip
+    
+    if command -v aws &> /dev/null; then
+        msg "$VERDE" "✅ AWS CLI instalado com sucesso"
+        log_message "AWS CLI instalado com sucesso"
+    else
+        msg "$VERMELHO" "❌ Falha na instalação do AWS CLI"
+        log_message "ERRO: Falha na instalação do AWS CLI"
+    fi
+else
+    msg "$VERDE" "✅ AWS CLI já está instalado"
+fi
+
+## Configura credenciais AWS
+msg "$BRANCO" "🔑 Configurando credenciais AWS..."
+export AWS_ACCESS_KEY_ID="$S3_ACCESS_KEY"
+export AWS_SECRET_ACCESS_KEY="$S3_SECRET_KEY"
+export AWS_DEFAULT_REGION="$S3_REGION"
+aws configure set default.s3.endpoint_url "https://$S3_ENDPOINT"
+aws configure set default.s3.signature_version s3v4
+msg "$VERDE" "✅ Credenciais AWS configuradas"
+log_message "Credenciais AWS configuradas"
+
+## Testa conectividade S3
+msg "$BRANCO" "🔗 Testando conectividade S3..."
+if aws s3 ls --endpoint-url "https://$S3_ENDPOINT" > /dev/null 2>&1; then
+    msg "$VERDE" "✅ Conectividade S3 confirmada"
+    log_message "Conectividade S3 confirmada"
+    
+    ## Verifica/cria bucket
+    S3_BUCKET_FINAL="${NEUROBOOST_INSTANCE}-backups"
+    if ! aws s3 ls "s3://$S3_BUCKET_FINAL" --endpoint-url "https://$S3_ENDPOINT" > /dev/null 2>&1; then
+        msg "$AMARELO" "📦 Criando bucket $S3_BUCKET_FINAL..."
+        if aws s3 mb "s3://$S3_BUCKET_FINAL" --endpoint-url "https://$S3_ENDPOINT"; then
+            msg "$VERDE" "✅ Bucket $S3_BUCKET_FINAL criado"
+            log_message "Bucket $S3_BUCKET_FINAL criado com sucesso"
+        else
+            msg "$VERMELHO" "❌ Falha ao criar bucket"
+            log_message "ERRO: Falha ao criar bucket $S3_BUCKET_FINAL"
+        fi
+    else
+        msg "$VERDE" "✅ Bucket $S3_BUCKET_FINAL existe"
+        log_message "Bucket $S3_BUCKET_FINAL já existe"
+    fi
+else
+    msg "$VERMELHO" "❌ Falha na conectividade S3"
+    msg "$AMARELO" "⚠️ Backup manual ainda funcionará, mas sem envio automático para S3"
+    log_message "AVISO: Falha na conectividade S3"
+fi
+
+## Cria script de teste S3
+cat > "$PROJETO_DIR/scripts/test_s3.sh" << 'TEST_S3_SCRIPT_EOF'
+#!/bin/bash
+
+## ===================================================================================================
+##                           SCRIPT DE TESTE S3 - NEUROBOOST DIGITAL
+##                         VERIFICAÇÃO DE CONECTIVIDADE E CONFIGURAÇÃO S3
+## ===================================================================================================
+
+## Cores para output
+AMARELO="\e[33m"
+VERDE="\e[32m"
+VERMELHO="\e[31m"
+BRANCO="\e[97m"
+AZUL="\e[34m"
+RESET="\e[0m"
+
+## Configurações do S3
+S3_ENDPOINT="$S3_ENDPOINT"
+S3_ACCESS_KEY="$S3_ACCESS_KEY"
+S3_SECRET_KEY="$S3_SECRET_KEY"
+S3_BUCKET=""
+S3_REGION="$S3_REGION"
+
+## Função para exibir mensagens coloridas
+msg() {
+    local cor=$1
+    local texto=$2
+    echo -e "${cor}${texto}${RESET}"
+}
+
+## Função para verificar e instalar AWS CLI
+verificar_aws_cli() {
+    if ! command -v aws &> /dev/null; then
+        msg "$AMARELO" "📦 AWS CLI não encontrado, instalando..."
+        
+        if [[ $(uname -m) == "arm64" ]]; then
+            ARCH="aarch64"
+        else
+            ARCH="x86_64"
+        fi
+        
+        curl -s "https://awscli.amazonaws.com/awscli-exe-linux-${ARCH}.zip" -o "/tmp/awscliv2.zip"
+        unzip -q "/tmp/awscliv2.zip" -d "/tmp/"
+        /tmp/aws/install --update > /dev/null 2>&1
+        rm -rf /tmp/aws /tmp/awscliv2.zip
+        
+        if command -v aws &> /dev/null; then
+            msg "$VERDE" "✅ AWS CLI instalado com sucesso"
+        else
+            msg "$VERMELHO" "❌ Falha na instalação do AWS CLI"
+            exit 1
+        fi
+    else
+        msg "$VERDE" "✅ AWS CLI já está instalado"
+    fi
+}
+
+## Função para configurar credenciais AWS
+configurar_aws() {
+    export AWS_ACCESS_KEY_ID="$S3_ACCESS_KEY"
+    export AWS_SECRET_ACCESS_KEY="$S3_SECRET_KEY"
+    export AWS_DEFAULT_REGION="$S3_REGION"
+    aws configure set default.s3.endpoint_url "https://$S3_ENDPOINT"
+    aws configure set default.s3.signature_version s3v4
+}
+
+## Função principal
+main() {
+    NOME_INSTANCIA=${1:-""}
+    
+    if [ -z "$NOME_INSTANCIA" ]; then
+        msg "$VERMELHO" "❌ Nome da instância não fornecido!"
+        msg "$AMARELO" "Uso: $0 <NOME_INSTANCIA>"
+        exit 1
+    fi
+    
+    S3_BUCKET="${NOME_INSTANCIA}-backups"
+    
+    msg "$AMARELO" "╔════════════════════════════════════════════════════════════════╗"
+    msg "$AMARELO" "║                    TESTE DE CONECTIVIDADE S3                   ║"
+    msg "$AMARELO" "╚════════════════════════════════════════════════════════════════╝"
+    echo ""
+    
+    verificar_aws_cli
+    configurar_aws
+    
+    msg "$BRANCO" "🔗 Testando conectividade S3..."
+    if aws s3 ls --endpoint-url "https://$S3_ENDPOINT" > /dev/null 2>&1; then
+        msg "$VERDE" "✅ Conectividade S3 confirmada"
+        
+        if ! aws s3 ls "s3://$S3_BUCKET" --endpoint-url "https://$S3_ENDPOINT" > /dev/null 2>&1; then
+            msg "$AMARELO" "📦 Criando bucket $S3_BUCKET..."
+            if aws s3 mb "s3://$S3_BUCKET" --endpoint-url "https://$S3_ENDPOINT"; then
+                msg "$VERDE" "✅ Bucket $S3_BUCKET criado"
+            else
+                msg "$VERMELHO" "❌ Falha ao criar bucket"
+                exit 1
+            fi
+        else
+            msg "$VERDE" "✅ Bucket $S3_BUCKET existe"
+        fi
+        
+        msg "$VERDE" "✅ Todos os testes S3 foram concluídos com sucesso!"
+    else
+        msg "$VERMELHO" "❌ Falha na conectividade S3"
+        exit 1
+    fi
+}
+
+main "$@"
+TEST_S3_SCRIPT_EOF
+
+## Torna o script de teste executável
+chmod +x "$PROJETO_DIR/scripts/test_s3.sh"
+msg "$VERDE" "✅ Script de teste S3 criado: $PROJETO_DIR/scripts/test_s3.sh"
+log_message "Script de teste S3 criado com sucesso"
+
+## Cria script de cleanup personalizado
+cat > "$PROJETO_DIR/scripts/cleanup.sh" << 'CLEANUP_SCRIPT_EOF'
+#!/bin/bash
+
+## ===================================================================================================
+##                           SCRIPT DE CLEANUP - NEUROBOOST DIGITAL
+##                         REMOÇÃO COMPLETA DE INSTALAÇÃO E DADOS
+## ===================================================================================================
+
+## Cores para output
+AMARELO="\e[33m"
+VERDE="\e[32m"
+VERMELHO="\e[31m"
+BRANCO="\e[97m"
+AZUL="\e[34m"
+RESET="\e[0m"
+
+## Função para exibir mensagens coloridas
+msg() {
+    local cor=$1
+    local texto=$2
+    echo -e "${cor}${texto}${RESET}"
+}
+
+## Função para confirmar ação
+confirmar() {
+    local pergunta="$1"
+    echo -e "${AMARELO}${pergunta} (s/N): ${RESET}"
+    read -r resposta
+    [[ "$resposta" =~ ^[Ss]$ ]]
+}
+
+## Função principal
+main() {
+    NOME_INSTANCIA=${1:-""}
+    
+    if [ -z "$NOME_INSTANCIA" ]; then
+        msg "$VERMELHO" "❌ Nome da instância não fornecido!"
+        msg "$AMARELO" "Uso: $0 <NOME_INSTANCIA>"
+        exit 1
+    fi
+    
+    msg "$AMARELO" "╔════════════════════════════════════════════════════════════════╗"
+    msg "$AMARELO" "║                    CLEANUP NEUROBOOST DIGITAL                  ║"
+    msg "$AMARELO" "╚════════════════════════════════════════════════════════════════╝"
+    echo ""
+    
+    msg "$VERMELHO" "⚠️  ATENÇÃO: Esta operação irá remover COMPLETAMENTE a instalação!"
+    msg "$BRANCO" "📋 Itens que serão removidos:"
+    echo "   • Todos os containers Docker da instância $NOME_INSTANCIA"
+    echo "   • Todos os volumes Docker da instância"
+    echo "   • Todas as redes Docker da instância"
+    echo "   • Pasta completa do projeto: $PWD"
+    echo "   • Entradas do crontab relacionadas"
+    echo "   • Certificados SSL do Traefik"
+    echo ""
+    
+    if ! confirmar "🔥 Deseja REALMENTE continuar com a remoção completa?"; then
+        msg "$VERDE" "✅ Operação cancelada pelo usuário"
+        exit 0
+    fi
+    
+    msg "$AMARELO" "🛑 Parando todos os containers da instância..."
+    docker stop $(docker ps -q --filter "name=${NOME_INSTANCIA}_") 2>/dev/null || true
+    
+    msg "$AMARELO" "🗑️ Removendo containers da instância..."
+    docker rm $(docker ps -aq --filter "name=${NOME_INSTANCIA}_") 2>/dev/null || true
+    
+    msg "$AMARELO" "💾 Removendo volumes da instância..."
+    docker volume rm $(docker volume ls -q --filter "name=${NOME_INSTANCIA}_") 2>/dev/null || true
+    
+    msg "$AMARELO" "🌐 Removendo redes da instância..."
+    docker network rm $(docker network ls -q --filter "name=${NOME_INSTANCIA}_") 2>/dev/null || true
+    
+    msg "$AMARELO" "⏰ Removendo entradas do crontab..."
+    crontab -l 2>/dev/null | grep -v "${NOME_INSTANCIA}" | crontab - 2>/dev/null || true
+    
+    msg "$AMARELO" "🔒 Removendo certificados SSL..."
+    rm -rf "/etc/letsencrypt/live/${NOME_INSTANCIA}"* 2>/dev/null || true
+    rm -rf "/etc/letsencrypt/archive/${NOME_INSTANCIA}"* 2>/dev/null || true
+    rm -rf "/etc/letsencrypt/renewal/${NOME_INSTANCIA}"* 2>/dev/null || true
+    
+    msg "$AMARELO" "📁 Removendo pasta do projeto..."
+    cd ..
+    rm -rf "$PWD"
+    
+    msg "$VERDE" "✅ Cleanup completo realizado com sucesso!"
+    msg "$BRANCO" "🎯 Instância $NOME_INSTANCIA foi completamente removida do sistema"
+}
+
+main "$@"
+CLEANUP_SCRIPT_EOF
+
+## Torna o script de cleanup executável
+chmod +x "$PROJETO_DIR/scripts/cleanup.sh"
+msg "$VERDE" "✅ Script de cleanup criado: $PROJETO_DIR/scripts/cleanup.sh"
+log_message "Script de cleanup criado com sucesso"
+
+## Cria script de restore com listagem de backups
+cat > "$PROJETO_DIR/scripts/restore.sh" << 'RESTORE_SCRIPT_EOF'
+#!/bin/bash
+
+## ===================================================================================================
+##                           SCRIPT DE RESTORE - NEUROBOOST DIGITAL
+##                         LISTAGEM E RESTAURAÇÃO DE BACKUPS DO S3
+## ===================================================================================================
+
+## Cores para output
+AMARELO="\e[33m"
+VERDE="\e[32m"
+VERMELHO="\e[31m"
+BRANCO="\e[97m"
+AZUL="\e[34m"
+RESET="\e[0m"
+
+## Configurações do S3
+S3_ENDPOINT="$S3_ENDPOINT"
+S3_ACCESS_KEY="$S3_ACCESS_KEY"
+S3_SECRET_KEY="$S3_SECRET_KEY"
+S3_BUCKET=""
+S3_REGION="$S3_REGION"
+
+## Função para exibir mensagens coloridas
+msg() {
+    local cor=$1
+    local texto=$2
+    echo -e "${cor}${texto}${RESET}"
+}
+
+## Função para configurar credenciais AWS
+configurar_aws() {
+    export AWS_ACCESS_KEY_ID="$S3_ACCESS_KEY"
+    export AWS_SECRET_ACCESS_KEY="$S3_SECRET_KEY"
+    export AWS_DEFAULT_REGION="$S3_REGION"
+    aws configure set default.s3.endpoint_url "https://$S3_ENDPOINT"
+    aws configure set default.s3.signature_version s3v4
+}
+
+## Função para listar backups disponíveis
+listar_backups() {
+    local nome_instancia=$1
+    S3_BUCKET="${nome_instancia}-backups"
+    
+    msg "$AMARELO" "📋 Listando backups disponíveis para $nome_instancia..."
+    
+    local backups=$(aws s3 ls "s3://$S3_BUCKET/" --endpoint-url "https://$S3_ENDPOINT" | grep "backup_${nome_instancia}_" | awk '{print $4}' | sort -r)
+    
+    if [ -z "$backups" ]; then
+        msg "$VERMELHO" "❌ Nenhum backup encontrado para a instância $nome_instancia"
+        return 1
+    fi
+    
+    echo ""
+    msg "$VERDE" "📦 Backups disponíveis:"
+    echo ""
+    
+    local contador=1
+    declare -a lista_backups
+    
+    for backup in $backups; do
+        local data_backup=$(echo "$backup" | grep -o '[0-9]\{8\}_[0-9]\{6\}')
+        local data_formatada=$(echo "$data_backup" | sed 's/\([0-9]\{4\}\)\([0-9]\{2\}\)\([0-9]\{2\}\)_\([0-9]\{2\}\)\([0-9]\{2\}\)\([0-9]\{2\}\)/\3\/\2\/\1 \4:\5:\6/')
+        local tamanho=$(aws s3 ls "s3://$S3_BUCKET/$backup" --endpoint-url "https://$S3_ENDPOINT" --human-readable | awk '{print $3" "$4}')
+        
+        printf "   %2d) %s - %s (%s)\n" "$contador" "$data_formatada" "$backup" "$tamanho"
+        lista_backups[$contador]="$backup"
+        contador=$((contador + 1))
+    done
+    
+    echo ""
+    echo -e "${AMARELO}Digite o número do backup para restaurar (0 para cancelar): ${RESET}"
+    read -r escolha
+    
+    if [ "$escolha" = "0" ] || [ -z "$escolha" ]; then
+        msg "$VERDE" "✅ Operação cancelada"
+        return 0
+    fi
+    
+    if [ "$escolha" -ge 1 ] && [ "$escolha" -lt "$contador" ]; then
+        local backup_escolhido="${lista_backups[$escolha]}"
+        msg "$VERDE" "✅ Backup selecionado: $backup_escolhido"
+        restaurar_backup "$nome_instancia" "$backup_escolhido"
+    else
+        msg "$VERMELHO" "❌ Opção inválida"
+        return 1
+    fi
+}
+
+## Função para restaurar backup
+restaurar_backup() {
+    local nome_instancia=$1
+    local arquivo_backup=$2
+    local temp_dir="/tmp/restore_${nome_instancia}_$(date +%s)"
+    
+    msg "$AMARELO" "⬇️ Baixando backup do S3..."
+    mkdir -p "$temp_dir"
+    
+    if aws s3 cp "s3://$S3_BUCKET/$arquivo_backup" "$temp_dir/$arquivo_backup" --endpoint-url "https://$S3_ENDPOINT"; then
+        msg "$VERDE" "✅ Backup baixado com sucesso"
+    else
+        msg "$VERMELHO" "❌ Falha no download do backup"
+        rm -rf "$temp_dir"
+        return 1
+    fi
+    
+    msg "$AMARELO" "📦 Extraindo backup..."
+    cd "$temp_dir"
+    tar xzf "$arquivo_backup"
+    
+    local backup_dir=$(find . -maxdepth 1 -type d -name "backup_${nome_instancia}_*" | head -1)
+    
+    if [ -z "$backup_dir" ]; then
+        msg "$VERMELHO" "❌ Estrutura de backup inválida"
+        rm -rf "$temp_dir"
+        return 1
+    fi
+    
+    msg "$AMARELO" "🛑 Parando containers da instância..."
+    docker stop $(docker ps -q --filter "name=${nome_instancia}_") 2>/dev/null || true
+    
+    msg "$AMARELO" "💾 Restaurando volumes..."
+    if [ -d "$backup_dir/volumes" ]; then
+        for volume_file in "$backup_dir/volumes"/*.tar.gz; do
+            if [ -f "$volume_file" ]; then
+                local volume_name=$(basename "$volume_file" .tar.gz)
+                msg "$AZUL" "  📦 Restaurando volume: $volume_name"
+                
+                docker volume rm "$volume_name" 2>/dev/null || true
+                docker volume create "$volume_name"
+                docker run --rm -v "$volume_name:/target" -v "$temp_dir/$backup_dir/volumes:/backup" alpine:latest tar xzf "/backup/$(basename "$volume_file")" -C /target
+            fi
+        done
+    fi
+    
+    msg "$AMARELO" "🗄️ Restaurando bancos de dados..."
+    if [ -d "$backup_dir/databases" ]; then
+        ## Inicia PostgreSQL temporariamente para restore
+        docker run -d --name "temp_postgres_restore" -e POSTGRES_PASSWORD=postgres -v "${nome_instancia}_postgres_data:/var/lib/postgresql/data" pgvector/pgvector:pg14
+        
+        ## Aguarda PostgreSQL ficar pronto
+        sleep 10
+        
+        for db_file in "$backup_dir/databases"/*.sql.gz; do
+            if [ -f "$db_file" ]; then
+                local db_name=$(basename "$db_file" | sed 's/_[0-9]\{8\}_[0-9]\{6\}\.sql\.gz$//')
+                if [ "$db_name" != "postgresql_global" ]; then
+                    msg "$AZUL" "  🗃️ Restaurando banco: $db_name"
+                    gunzip -c "$db_file" | docker exec -i "temp_postgres_restore" psql -U postgres -d "$db_name" 2>/dev/null || true
+                fi
+            fi
+        done
+        
+        docker stop "temp_postgres_restore"
+        docker rm "temp_postgres_restore"
+    fi
+    
+    msg "$AMARELO" "⚙️ Restaurando configurações..."
+    if [ -d "$backup_dir/configs" ]; then
+        cp -r "$backup_dir/configs"/* "$PWD/" 2>/dev/null || true
+    fi
+    
+    ## Limpeza
+    rm -rf "$temp_dir"
+    
+    msg "$VERDE" "✅ Restore concluído com sucesso!"
+    msg "$BRANCO" "🎯 Reinicie os serviços para aplicar as alterações"
+}
+
+## Função principal
+main() {
+    NOME_INSTANCIA=${1:-""}
+    
+    if [ -z "$NOME_INSTANCIA" ]; then
+        msg "$VERMELHO" "❌ Nome da instância não fornecido!"
+        msg "$AMARELO" "Uso: $0 <NOME_INSTANCIA>"
+        exit 1
+    fi
+    
+    if ! command -v aws &> /dev/null; then
+        msg "$VERMELHO" "❌ AWS CLI não encontrado! Execute o script de backup primeiro."
+        exit 1
+    fi
+    
+    msg "$AMARELO" "╔════════════════════════════════════════════════════════════════╗"
+    msg "$AMARELO" "║                    RESTORE NEUROBOOST DIGITAL                  ║"
+    msg "$AMARELO" "╚════════════════════════════════════════════════════════════════╝"
+    echo ""
+    
+    configurar_aws
+    listar_backups "$NOME_INSTANCIA"
+}
+
+main "$@"
+RESTORE_SCRIPT_EOF
+
+## Torna o script de restore executável
+chmod +x "$PROJETO_DIR/scripts/restore.sh"
+msg "$VERDE" "✅ Script de restore criado: $PROJETO_DIR/scripts/restore.sh"
+log_message "Script de restore criado com sucesso"
+
+## Executa primeiro backup de teste
+msg "$BRANCO" "🧪 Executando backup de teste..."
+log_message "Iniciando backup de teste"
+
+if "$PROJETO_DIR/scripts/backup.sh" "$NOME_INSTANCIA" > /dev/null 2>&1; then
+    msg "$VERDE" "✅ Backup de teste executado com sucesso"
+    log_message "Backup de teste executado com sucesso"
+else
+    msg "$AMARELO" "⚠️ Backup de teste falhou, mas sistema está configurado"
+    log_message "AVISO: Backup de teste falhou"
+fi
+
+## Configura crontab para backup automático
+msg "$BRANCO" "⏰ Configurando backup automático (crontab)..."
+log_message "Configurando crontab para backup automático"
+
+## Calcula entrada do crontab baseada no intervalo
+if [ "$BACKUP_INTERVAL_HOURS" -eq 24 ]; then
+    CRONTAB_ENTRY="0 2 * * * $PROJETO_DIR/scripts/backup.sh $NOME_INSTANCIA >> /var/log/neuroboost_backup.log 2>&1"
+elif [ "$BACKUP_INTERVAL_HOURS" -eq 12 ]; then
+    CRONTAB_ENTRY="0 2,14 * * * $PROJETO_DIR/scripts/backup.sh $NOME_INSTANCIA >> /var/log/neuroboost_backup.log 2>&1"
+elif [ "$BACKUP_INTERVAL_HOURS" -eq 6 ]; then
+    CRONTAB_ENTRY="0 2,8,14,20 * * * $PROJETO_DIR/scripts/backup.sh $NOME_INSTANCIA >> /var/log/neuroboost_backup.log 2>&1"
+elif [ "$BACKUP_INTERVAL_HOURS" -eq 4 ]; then
+    CRONTAB_ENTRY="0 2,6,10,14,18,22 * * * $PROJETO_DIR/scripts/backup.sh $NOME_INSTANCIA >> /var/log/neuroboost_backup.log 2>&1"
+else
+    ## Para outros intervalos, usa a cada X horas a partir das 02:00
+    CRONTAB_ENTRY="0 */$BACKUP_INTERVAL_HOURS * * * $PROJETO_DIR/scripts/backup.sh $NOME_INSTANCIA >> /var/log/neuroboost_backup.log 2>&1"
+fi
+
+## Verifica se entrada já existe
+if crontab -l 2>/dev/null | grep -q "$PROJETO_DIR/scripts/backup.sh $NOME_INSTANCIA"; then
+    msg "$VERDE" "✅ Backup automático já está configurado"
+    log_message "Backup automático já estava configurado"
+else
+    ## Adiciona entrada ao crontab
+    (crontab -l 2>/dev/null; echo "$CRONTAB_ENTRY") | crontab -
+    
+    if [ $? -eq 0 ]; then
+        if [ "$BACKUP_INTERVAL_HOURS" -eq 24 ]; then
+            msg "$VERDE" "✅ Backup automático configurado (diário às 02:00)"
+        else
+            msg "$VERDE" "✅ Backup automático configurado (a cada $BACKUP_INTERVAL_HOURS horas)"
+        fi
+        log_message "Backup automático configurado no crontab"
+    else
+        msg "$AMARELO" "⚠️ Falha ao configurar backup automático"
+        log_message "AVISO: Falha ao configurar crontab"
+    fi
+fi
+
+## Cria arquivo de instruções de backup
+cat > "$PROJETO_DIR/backup_instructions.txt" << EOF
+===================================================
+         INSTRUÇÕES DE BACKUP - NEUROBOOST
+===================================================
+
+BACKUP AUTOMÁTICO:
+• Configurado para executar diariamente às 02:00
+• Logs salvos em: /var/log/neuroboost_backup.log
+• Backups enviados automaticamente para S3
+• Retenção: 3 dias no S3
+
+BACKUP MANUAL:
+• Execute: sudo $PROJETO_DIR/scripts/backup.sh $NOME_INSTANCIA
+• O backup será enviado automaticamente para S3
+
+CONFIGURAÇÕES S3:
+• Endpoint: $S3_ENDPOINT
+• Bucket: ${NEUROBOOST_INSTANCE}-backups
+• Região: $S3_REGION
+• Intervalo: A cada $BACKUP_INTERVAL_HOURS horas
+• Retenção: $BACKUP_RETENTION_DAYS dias
+
+SCRIPTS DISPONÍVEIS:
+• Backup: $PROJETO_DIR/scripts/backup.sh
+• Teste S3: $PROJETO_DIR/scripts/test_s3.sh
+• Cleanup: $PROJETO_DIR/scripts/cleanup.sh
+• Restore: $PROJETO_DIR/scripts/restore.sh
+
+MONITORAMENTO:
+• Ver logs: tail -f /var/log/neuroboost_backup.log
+• Verificar crontab: crontab -l
+• Listar backups S3: aws s3 ls s3://${NEUROBOOST_INSTANCE}-backups/ --endpoint-url https://$S3_ENDPOINT
+
+COMANDOS ÚTEIS:
+• Editar crontab: crontab -e
+• Remover backup automático: crontab -l | grep -v "backup.sh" | crontab -
+• Testar conectividade S3: aws s3 ls --endpoint-url https://$S3_ENDPOINT
+• Testar S3: sudo $PROJETO_DIR/scripts/test_s3.sh $NOME_INSTANCIA
+• Listar/Restaurar backups: sudo $PROJETO_DIR/scripts/restore.sh $NOME_INSTANCIA
+• Remover instalação: sudo $PROJETO_DIR/scripts/cleanup.sh $NOME_INSTANCIA
+
+===================================================
+EOF
+
+msg "$VERDE" "✅ Sistema de backup configurado com sucesso!"
+msg "$BRANCO" "📋 Instruções salvas em: $PROJETO_DIR/backup_instructions.txt"
 echo ""
 
 msg "$AMARELO" "╔════════════════════════════════════════════════════════════════╗"
