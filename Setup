@@ -18,7 +18,7 @@
 ## ===================================================================================================
 
 ## Versão do script (SEMVER)
-VERSION="2.1.1"
+VERSION="2.1.2"
 
 ## Cores
 AMARELO="\e[33m"
@@ -487,7 +487,7 @@ exec_log "apt-get autoclean" "Limpando cache de pacotes" "false"
 
 # Tenta instalar pacotes individualmente para identificar problemas
 msg "$BRANCO" "📦 Instalando dependências básicas..."
-for package in curl jq openssl apache2-utils tzdata ntp unzip; do
+for package in curl jq openssl apache2-utils tzdata unzip; do
     if ! dpkg -l | grep -q "^ii  $package "; then
         msg "$AMARELO" "📦 Instalando $package..."
         if ! exec_log "apt-get install -y -qq $package" "Instalando $package" "false"; then
@@ -498,6 +498,19 @@ for package in curl jq openssl apache2-utils tzdata ntp unzip; do
         msg "$VERDE" "✅ $package já está instalado"
     fi
 done
+
+# Tenta instalar ntp opcionalmente (não crítico)
+msg "$BRANCO" "📦 Tentando instalar ntp (opcional)..."
+if ! dpkg -l | grep -q "^ii  ntp "; then
+    if exec_log "apt-get install -y -qq ntp" "Instalando ntp" "false"; then
+        msg "$VERDE" "✅ ntp instalado com sucesso"
+    else
+        msg "$AMARELO" "⚠️  ntp não pôde ser instalado, usando systemd-timesyncd"
+        msg "$AMARELO" "ℹ️  systemd-timesyncd é suficiente para sincronização de tempo"
+    fi
+else
+    msg "$VERDE" "✅ ntp já está instalado"
+fi
 
 msg "$VERDE" "✅ Sistema atualizado"
 
