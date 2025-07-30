@@ -18,7 +18,7 @@
 ## ===================================================================================================
 
 ## Versão do script (SEMVER)
-VERSION="2.1.6"
+VERSION="2.1.7"
 
 ## Cores
 AMARELO="\e[33m"
@@ -1155,7 +1155,7 @@ services:
       - S3_SECRET_KEY=supersecretpassword
       - S3_ENDPOINT=s3.digi.gmowses.cloud
       - S3_PORT=443
-      - S3_REGION=us-east-1
+      - S3_REGION=us-da-1
       - S3_USE_SSL=true
       - S3_BUCKET=chatdigi-files
 
@@ -1909,11 +1909,11 @@ msg "$AMARELO" "=== CONFIGURANDO SISTEMA DE BACKUP ==="
 echo ""
 
 ## Configurações do S3 (personalizáveis)
-S3_ENDPOINT="${S3_ENDPOINT:-j1n5.da.idrivee2-20.com}"
-S3_ACCESS_KEY="${S3_ACCESS_KEY:-vrFWzHutAsAMf29xhQJA}"
-S3_SECRET_KEY="${S3_SECRET_KEY:-VqtYDE6pZcY0FEB11OHWaETPywP9UQPzPAtsemjv}"
+S3_ENDPOINT="${S3_ENDPOINT}"
+S3_ACCESS_KEY="${S3_ACCESS_KEY}"
+S3_SECRET_KEY="${S3_SECRET_KEY}"
 S3_BUCKET="${NEUROBOOST_INSTANCE}"
-S3_REGION="${S3_REGION:-us-east-1}"
+S3_REGION="${S3_REGION:-us-da-1}"
 BACKUP_INTERVAL_HOURS="${BACKUP_INTERVAL_HOURS:-24}"  # Intervalo entre backups em horas
 BACKUP_RETENTION_DAYS="${BACKUP_RETENTION_DAYS:-3}"  # Retenção de backups no S3 em dias
 
@@ -2265,9 +2265,9 @@ fi
 msg "$BRANCO" "🔑 Configurando credenciais AWS..."
 
 # Configura credenciais usando aws configure
-aws configure set aws_access_key_id vrFWzHutAsAMf29xhQJA --profile idrivee2
-aws configure set aws_secret_access_key VqtYDE6pZcY0FEB11OHWaETPywP9UQPzPAtsemjv --profile idrivee2
-aws configure set region us-east-1 --profile idrivee2
+aws configure set aws_access_key_id "$S3_ACCESS_KEY" --profile idrivee2
+aws configure set aws_secret_access_key "$S3_SECRET_KEY" --profile idrivee2
+aws configure set region "$S3_REGION" --profile idrivee2
 aws configure set output json --profile idrivee2
 
 # Define variáveis de ambiente como fallback
