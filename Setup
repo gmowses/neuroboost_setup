@@ -464,7 +464,7 @@ echo ""
 ## Atualiza sistema
 msg "$BRANCO" "📦 Atualizando sistema..."
 exec_log "apt-get update -qq" "Atualizando lista de pacotes"
-exec_log "apt-get install -y -qq curl jq openssl apache2-utils tzdata ntp" "Instalando dependências básicas e ferramentas de tempo"
+exec_log "apt-get install -y -qq curl jq openssl apache2-utils tzdata ntp unzip" "Instalando dependências básicas e ferramentas de tempo"
 msg "$VERDE" "✅ Sistema atualizado"
 
 ## Configura fuso horário para Brasília
