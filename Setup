@@ -27,7 +27,7 @@
 ## ===================================================================================================
 
 ## Versão do script (SEMVER)
-VERSION="2.3.2"
+VERSION="2.3.3"
 
 ## Cores
 AMARELO="\e[33m"
@@ -2063,7 +2063,7 @@ log_message "Criando pasta de scripts e backup automático"
 mkdir -p "$PROJETO_DIR/scripts"
 
 ## Cria script de backup
-cat > "$PROJETO_DIR/scripts/backup.sh" << 'BACKUP_SCRIPT_EOF'
+cat > "$PROJETO_DIR/scripts/backup.sh" << BACKUP_SCRIPT_EOF
 #!/bin/bash
 
 ## ===================================================================================================
@@ -2497,7 +2497,7 @@ else
 fi
 
 ## Cria script de teste S3
-cat > "$PROJETO_DIR/scripts/test_s3.sh" << 'TEST_S3_SCRIPT_EOF'
+cat > "$PROJETO_DIR/scripts/test_s3.sh" << TEST_S3_SCRIPT_EOF
 #!/bin/bash
 
 ## ===================================================================================================
@@ -2700,7 +2700,7 @@ msg "$VERDE" "✅ Script de cleanup criado: $PROJETO_DIR/scripts/cleanup.sh"
 log_message "Script de cleanup criado com sucesso"
 
 ## Cria script de restore com listagem de backups
-cat > "$PROJETO_DIR/scripts/restore.sh" << 'RESTORE_SCRIPT_EOF'
+cat > "$PROJETO_DIR/scripts/restore.sh" << RESTORE_SCRIPT_EOF
 #!/bin/bash
 
 ## ===================================================================================================
