@@ -18,7 +18,7 @@
 ## ===================================================================================================
 
 ## Versão do script (SEMVER)
-VERSION="2.0.0"
+VERSION="2.1.0"
 
 ## Cores
 AMARELO="\e[33m"
@@ -158,6 +158,7 @@ msg() {
 exec_log() {
     local cmd="$1"
     local description="$2"
+    local critical="$3"  # Se 'true', para execução em caso de erro
     
     log_message "EXECUTANDO: $cmd"
     if [ -n "$description" ]; then
@@ -176,6 +177,17 @@ exec_log() {
         log_message "SAÍDA: $output"
     fi
     log_message "CÓDIGO DE SAÍDA: $exit_code"
+    
+    # Se for crítico e falhou, para a execução
+    if [ "$critical" = "true" ] && [ $exit_code -ne 0 ]; then
+        msg "$VERMELHO" "❌ ERRO CRÍTICO: Comando falhou: $cmd"
+        msg "$VERMELHO" "❌ Código de saída: $exit_code"
+        if [ -n "$output" ]; then
+            msg "$VERMELHO" "❌ Saída: $output"
+        fi
+        log_message "ERRO CRÍTICO: Execução interrompida devido a falha em comando crítico"
+        exit 1
+    fi
     
     # Retorna o código de saída original
     return $exit_code
@@ -463,8 +475,8 @@ echo ""
 
 ## Atualiza sistema
 msg "$BRANCO" "📦 Atualizando sistema..."
-exec_log "apt-get update -qq" "Atualizando lista de pacotes"
-exec_log "apt-get install -y -qq curl jq openssl apache2-utils tzdata ntp unzip" "Instalando dependências básicas e ferramentas de tempo"
+exec_log "apt-get update -qq" "Atualizando lista de pacotes" "true"
+exec_log "apt-get install -y -qq curl jq openssl apache2-utils tzdata ntp unzip" "Instalando dependências básicas e ferramentas de tempo" "true"
 msg "$VERDE" "✅ Sistema atualizado"
 
 ## Configura fuso horário para Brasília
@@ -2155,16 +2167,28 @@ msg "$BRANCO" "🔧 Verificando AWS CLI..."
 if ! command -v aws &> /dev/null; then
     msg "$AMARELO" "📦 Instalando AWS CLI..."
     
+    # Verifica se unzip está disponível
+    if ! command -v unzip &> /dev/null; then
+        msg "$VERMELHO" "❌ ERRO: comando unzip não encontrado!"
+        msg "$AMARELO" "ℹ️  Tentando instalar unzip..."
+        exec_log "apt-get update -qq" "Atualizando lista de pacotes para unzip" "true"
+        exec_log "apt-get install -y -qq unzip" "Instalando unzip" "true"
+    fi
+    
     if [[ $(uname -m) == "arm64" ]]; then
         ARCH="aarch64"
     else
         ARCH="x86_64"
     fi
     
-    curl -s "https://awscli.amazonaws.com/awscli-exe-linux-${ARCH}.zip" -o "/tmp/awscliv2.zip"
-    unzip -q "/tmp/awscliv2.zip" -d "/tmp/"
-    /tmp/aws/install --update > /dev/null 2>&1
-    rm -rf /tmp/aws /tmp/awscliv2.zip
+    exec_log "curl -s 'https://awscli.amazonaws.com/awscli-exe-linux-${ARCH}.zip' -o '/tmp/awscliv2.zip'" "Baixando AWS CLI" "true"
+    exec_log "unzip -q '/tmp/awscliv2.zip' -d '/tmp/'" "Extraindo AWS CLI" "true"
+    exec_log "/tmp/aws/install --update" "Instalando AWS CLI" "true"
+    exec_log "rm -rf /tmp/aws /tmp/awscliv2.zip" "Limpando arquivos temporários"
+    
+    # Atualiza PATH para garantir que aws seja encontrado
+    export PATH="/usr/local/bin:/usr/bin:$PATH"
+    hash -r
     
     if command -v aws &> /dev/null; then
         msg "$VERDE" "✅ AWS CLI instalado com sucesso"
@@ -2172,6 +2196,7 @@ if ! command -v aws &> /dev/null; then
     else
         msg "$VERMELHO" "❌ Falha na instalação do AWS CLI"
         log_message "ERRO: Falha na instalação do AWS CLI"
+        exit 1
     fi
 else
     msg "$VERDE" "✅ AWS CLI já está instalado"
