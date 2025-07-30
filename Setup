@@ -18,7 +18,7 @@
 ## ===================================================================================================
 
 ## Versão do script (SEMVER)
-VERSION="2.1.0"
+VERSION="2.1.1"
 
 ## Cores
 AMARELO="\e[33m"
@@ -476,7 +476,29 @@ echo ""
 ## Atualiza sistema
 msg "$BRANCO" "📦 Atualizando sistema..."
 exec_log "apt-get update -qq" "Atualizando lista de pacotes" "true"
-exec_log "apt-get install -y -qq curl jq openssl apache2-utils tzdata ntp unzip" "Instalando dependências básicas e ferramentas de tempo" "true"
+
+# Resolve problemas de pacotes em hold e conflitos
+msg "$BRANCO" "🔧 Resolvendo conflitos de pacotes..."
+exec_log "apt-mark unhold $(apt-mark showhold)" "Removendo hold de pacotes" "false"
+exec_log "dpkg --configure -a" "Configurando pacotes pendentes" "false"
+exec_log "apt-get -f install -y" "Corrigindo dependências quebradas" "false"
+exec_log "apt-get autoremove -y" "Removendo pacotes desnecessários" "false"
+exec_log "apt-get autoclean" "Limpando cache de pacotes" "false"
+
+# Tenta instalar pacotes individualmente para identificar problemas
+msg "$BRANCO" "📦 Instalando dependências básicas..."
+for package in curl jq openssl apache2-utils tzdata ntp unzip; do
+    if ! dpkg -l | grep -q "^ii  $package "; then
+        msg "$AMARELO" "📦 Instalando $package..."
+        if ! exec_log "apt-get install -y -qq $package" "Instalando $package" "false"; then
+            msg "$AMARELO" "⚠️  Falha ao instalar $package, tentando com --fix-missing..."
+            exec_log "apt-get install -y -qq --fix-missing $package" "Instalando $package com fix-missing" "true"
+        fi
+    else
+        msg "$VERDE" "✅ $package já está instalado"
+    fi
+done
+
 msg "$VERDE" "✅ Sistema atualizado"
 
 ## Configura fuso horário para Brasília
