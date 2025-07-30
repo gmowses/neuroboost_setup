@@ -18,7 +18,7 @@
 ## ===================================================================================================
 
 ## Versão do script (SEMVER)
-VERSION="2.1.5"
+VERSION="2.1.6"
 
 ## Cores
 AMARELO="\e[33m"
@@ -2264,13 +2264,10 @@ fi
 ## Configura credenciais AWS
 msg "$BRANCO" "🔑 Configurando credenciais AWS..."
 
-# Cria diretório .aws se não existir
-mkdir -p ~/.aws
-
 # Configura credenciais usando aws configure
-aws configure set aws_access_key_id "$S3_ACCESS_KEY" --profile idrivee2
-aws configure set aws_secret_access_key "$S3_SECRET_KEY" --profile idrivee2
-aws configure set region "$S3_REGION" --profile idrivee2
+aws configure set aws_access_key_id vrFWzHutAsAMf29xhQJA --profile idrivee2
+aws configure set aws_secret_access_key VqtYDE6pZcY0FEB11OHWaETPywP9UQPzPAtsemjv --profile idrivee2
+aws configure set region us-east-1 --profile idrivee2
 aws configure set output json --profile idrivee2
 
 # Define variáveis de ambiente como fallback
@@ -2413,9 +2410,8 @@ main() {
     
     msg "$BRANCO" "🔗 Testando conectividade S3..."
     if aws s3 ls --endpoint-url "https://$S3_ENDPOINT" --profile idrivee2 > /dev/null 2>&1; then
-        msg "$VERDE" "✅ Conectividade S3 confirmada"
-        
-        if aws s3 ls "s3://$S3_BUCKET" --endpoint-url "https://$S3_ENDPOINT" --profile idrivee2 > /dev/null 2>&1; then
+             msg "$VERDE" "✅ Conectividade S3 confirmada"
+             if aws s3 ls "s3://$S3_BUCKET" --endpoint-url "https://$S3_ENDPOINT" --profile idrivee2 > /dev/null 2>&1; then
             msg "$VERDE" "✅ Bucket $S3_BUCKET confirmado"
         else
             msg "$VERMELHO" "❌ Bucket $S3_BUCKET não encontrado"
