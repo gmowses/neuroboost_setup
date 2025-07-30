@@ -18,7 +18,7 @@
 ## ===================================================================================================
 
 ## Versão do script (SEMVER)
-VERSION="2.1.4"
+VERSION="2.1.5"
 
 ## Cores
 AMARELO="\e[33m"
@@ -2263,7 +2263,22 @@ fi
 
 ## Configura credenciais AWS
 msg "$BRANCO" "🔑 Configurando credenciais AWS..."
-configurar_aws
+
+# Cria diretório .aws se não existir
+mkdir -p ~/.aws
+
+# Configura credenciais usando aws configure
+aws configure set aws_access_key_id "$S3_ACCESS_KEY" --profile idrivee2
+aws configure set aws_secret_access_key "$S3_SECRET_KEY" --profile idrivee2
+aws configure set region "$S3_REGION" --profile idrivee2
+aws configure set output json --profile idrivee2
+
+# Define variáveis de ambiente como fallback
+export AWS_ACCESS_KEY_ID="$S3_ACCESS_KEY"
+export AWS_SECRET_ACCESS_KEY="$S3_SECRET_KEY"
+export AWS_DEFAULT_REGION="$S3_REGION"
+export AWS_PROFILE="idrivee2"
+
 msg "$VERDE" "✅ Credenciais AWS configuradas"
 log_message "Credenciais AWS configuradas"
 
