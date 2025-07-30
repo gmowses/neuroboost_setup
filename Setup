@@ -18,7 +18,7 @@
 ## ===================================================================================================
 
 ## Versão do script (SEMVER)
-VERSION="2.1.9"
+VERSION="2.2.0"
 
 ## Cores
 AMARELO="\e[33m"
@@ -1996,22 +1996,57 @@ verificar_aws_cli() {
             exit 1
         fi
     fi
+    
+    # Verifica se o perfil idrivee2 existe
+    msg "$AZUL" "🔍 Verificando perfil AWS 'idrivee2'..."
+    if aws configure list --profile idrivee2 > /dev/null 2>&1; then
+        msg "$VERDE" "✅ Perfil 'idrivee2' encontrado"
+        echo "📋 Configurações do perfil:"
+        aws configure list --profile idrivee2
+    else
+        msg "$VERMELHO" "❌ Perfil 'idrivee2' não encontrado!"
+        msg "$AMARELO" "⚠️ Execute o Setup novamente para configurar as credenciais S3"
+        exit 1
+    fi
 }
 
 
 
 ## Função para verificar S3
 verificar_s3() {
-    if aws s3 ls --endpoint-url https://$S3_ENDPOINT --profile idrivee2 > /dev/null 2>&1; then
-        if aws s3 ls "s3://$S3_BUCKET" --endpoint-url https://$S3_ENDPOINT --profile idrivee2 > /dev/null 2>&1; then
+    msg "$AZUL" "🔍 Testando conectividade S3..."
+    local cmd1="aws s3 ls --endpoint-url https://$S3_ENDPOINT --profile idrivee2"
+    echo "📋 Executando: $cmd1"
+    
+    local output1=$(aws s3 ls --endpoint-url https://$S3_ENDPOINT --profile idrivee2 2>&1)
+    local exit_code1=$?
+    
+    echo "📊 Saída: $output1"
+    echo "🔢 Código de saída: $exit_code1"
+    
+    if [ $exit_code1 -eq 0 ]; then
+        msg "$VERDE" "✅ Conectividade S3 confirmada"
+        
+        msg "$AZUL" "🔍 Verificando bucket..."
+        local cmd2="aws s3 ls s3://$S3_BUCKET --endpoint-url https://$S3_ENDPOINT --profile idrivee2"
+        echo "📋 Executando: $cmd2"
+        
+        local output2=$(aws s3 ls "s3://$S3_BUCKET" --endpoint-url https://$S3_ENDPOINT --profile idrivee2 2>&1)
+        local exit_code2=$?
+        
+        echo "📊 Saída: $output2"
+        echo "🔢 Código de saída: $exit_code2"
+        
+        if [ $exit_code2 -eq 0 ]; then
             msg "$VERDE" "✅ Bucket $S3_BUCKET confirmado"
         else
             msg "$VERMELHO" "❌ Bucket $S3_BUCKET não encontrado"
-            msg "$AMARELO" "⚠️ Verifique se o bucket existe no S3"
+            msg "$AMARELO" "⚠️ Erro: $output2"
             exit 1
         fi
     else
         msg "$VERMELHO" "❌ Falha na conectividade S3"
+        msg "$AMARELO" "⚠️ Erro: $output1"
         exit 1
     fi
 }
@@ -2105,13 +2140,23 @@ enviar_para_s3() {
     
     msg "$AMARELO" "☁️ Enviando backup para S3..."
     
-    if aws s3 cp "$arquivo_backup" "s3://$S3_BUCKET/$nome_arquivo" --endpoint-url https://$S3_ENDPOINT --profile idrivee2; then
+    local cmd="aws s3 cp $arquivo_backup s3://$S3_BUCKET/$nome_arquivo --endpoint-url https://$S3_ENDPOINT --profile idrivee2"
+    echo "📋 Executando: $cmd"
+    
+    local output=$(aws s3 cp "$arquivo_backup" "s3://$S3_BUCKET/$nome_arquivo" --endpoint-url https://$S3_ENDPOINT --profile idrivee2 2>&1)
+    local exit_code=$?
+    
+    echo "📊 Saída: $output"
+    echo "🔢 Código de saída: $exit_code"
+    
+    if [ $exit_code -eq 0 ]; then
         local tamanho=$(du -h "$arquivo_backup" | cut -f1)
         msg "$VERDE" "✅ Backup enviado para S3: $nome_arquivo ($tamanho)"
         rm -f "$arquivo_backup"
         return 0
     else
         msg "$VERMELHO" "❌ Falha no envio para S3"
+        msg "$AMARELO" "⚠️ Erro: $output"
         return 1
     fi
 }
@@ -2144,6 +2189,17 @@ limpar_s3_antigos() {
 main() {
     NOME_INSTANCIA=${1:-""}
     DESTINO_BACKUP=${2:-"/tmp/neuroboost_backup"}
+    
+    echo "🔍 === DEBUG: VARIÁVEIS DE AMBIENTE ==="
+    echo "📋 NOME_INSTANCIA: $NOME_INSTANCIA"
+    echo "📋 S3_ENDPOINT: $S3_ENDPOINT"
+    echo "📋 S3_BUCKET: $S3_BUCKET"
+    echo "📋 S3_REGION: $S3_REGION"
+    echo "📋 DESTINO_BACKUP: $DESTINO_BACKUP"
+    echo "📋 DATA_BACKUP: $DATA_BACKUP"
+    echo "📋 AWS Profile: idrivee2"
+    echo "🔍 ========================================"
+    echo ""
     
     if [ -z "$NOME_INSTANCIA" ]; then
         echo "❌ Nome da instância não fornecido!"
@@ -2674,12 +2730,31 @@ log_message "Script de restore criado com sucesso"
 msg "$BRANCO" "🧪 Executando backup de teste..."
 log_message "Iniciando backup de teste"
 
-if "$PROJETO_DIR/scripts/backup.sh" "$NOME_INSTANCIA" > /dev/null 2>&1; then
+echo "📋 Comando executado: $PROJETO_DIR/scripts/backup.sh $NOME_INSTANCIA"
+echo "🔍 Executando com debug ativo..."
+echo ""
+
+# Executa backup com saída completa para debug
+BACKUP_OUTPUT=$("$PROJETO_DIR/scripts/backup.sh" "$NOME_INSTANCIA" 2>&1)
+BACKUP_EXIT_CODE=$?
+
+echo "📊 Saída do comando:"
+echo "$BACKUP_OUTPUT"
+echo ""
+echo "🔢 Código de saída: $BACKUP_EXIT_CODE"
+echo ""
+
+if [ $BACKUP_EXIT_CODE -eq 0 ]; then
     msg "$VERDE" "✅ Backup de teste executado com sucesso"
     log_message "Backup de teste executado com sucesso"
 else
-    msg "$AMARELO" "⚠️ Backup de teste falhou, mas sistema está configurado"
-    log_message "AVISO: Backup de teste falhou"
+    msg "$VERMELHO" "❌ Backup de teste falhou!"
+    msg "$AMARELO" "📋 Detalhes do erro:"
+    echo "$BACKUP_OUTPUT" | tail -20
+    echo ""
+    msg "$AMARELO" "⚠️ Sistema está configurado, mas verifique as credenciais S3"
+    log_message "ERRO: Backup de teste falhou - Código: $BACKUP_EXIT_CODE"
+    log_message "Saída do erro: $BACKUP_OUTPUT"
 fi
 
 ## Configura crontab para backup automático
