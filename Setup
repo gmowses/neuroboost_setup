@@ -18,7 +18,7 @@
 ## ===================================================================================================
 
 ## Versão do script (SEMVER)
-VERSION="2.1.3"
+VERSION="2.1.4"
 
 ## Cores
 AMARELO="\e[33m"
@@ -2000,17 +2000,37 @@ verificar_aws_cli() {
 
 ## Função para configurar credenciais AWS
 configurar_aws() {
+    # Cria diretório .aws se não existir
+    mkdir -p ~/.aws
+    
+    # Cria arquivo de credenciais com profile idrivee2
+    cat > ~/.aws/credentials << EOF
+[idrivee2]
+aws_access_key_id = $S3_ACCESS_KEY
+aws_secret_access_key = $S3_SECRET_KEY
+EOF
+    
+    # Cria arquivo de configuração com profile idrivee2
+    cat > ~/.aws/config << EOF
+[profile idrivee2]
+region = $S3_REGION
+output = json
+s3 =
+    endpoint_url = https://$S3_ENDPOINT
+    signature_version = s3v4
+EOF
+    
+    # Define variáveis de ambiente como fallback
     export AWS_ACCESS_KEY_ID="$S3_ACCESS_KEY"
     export AWS_SECRET_ACCESS_KEY="$S3_SECRET_KEY"
     export AWS_DEFAULT_REGION="$S3_REGION"
-    aws configure set default.s3.endpoint_url "https://$S3_ENDPOINT"
-    aws configure set default.s3.signature_version s3v4
+    export AWS_PROFILE="idrivee2"
 }
 
 ## Função para verificar S3
 verificar_s3() {
-    if aws s3 ls --endpoint-url "https://$S3_ENDPOINT" > /dev/null 2>&1; then
-        if aws s3 ls "s3://$S3_BUCKET" --endpoint-url "https://$S3_ENDPOINT" > /dev/null 2>&1; then
+    if aws s3 ls --endpoint-url "https://$S3_ENDPOINT" --profile idrivee2 > /dev/null 2>&1; then
+        if aws s3 ls "s3://$S3_BUCKET" --endpoint-url "https://$S3_ENDPOINT" --profile idrivee2 > /dev/null 2>&1; then
             msg "$VERDE" "✅ Bucket $S3_BUCKET confirmado"
         else
             msg "$VERMELHO" "❌ Bucket $S3_BUCKET não encontrado"
@@ -2112,7 +2132,7 @@ enviar_para_s3() {
     
     msg "$AMARELO" "☁️ Enviando backup para S3..."
     
-    if aws s3 cp "$arquivo_backup" "s3://$S3_BUCKET/$nome_arquivo" --endpoint-url "https://$S3_ENDPOINT"; then
+    if aws s3 cp "$arquivo_backup" "s3://$S3_BUCKET/$nome_arquivo" --endpoint-url "https://$S3_ENDPOINT" --profile idrivee2; then
         local tamanho=$(du -h "$arquivo_backup" | cut -f1)
         msg "$VERDE" "✅ Backup enviado para S3: $nome_arquivo ($tamanho)"
         rm -f "$arquivo_backup"
@@ -2128,13 +2148,13 @@ limpar_s3_antigos() {
     msg "$AMARELO" "🧹 Limpando backups antigos no S3..."
     
     local data_limite=$(date -d "$RETENCAO_DIAS days ago" +%Y%m%d)
-    local arquivos_s3=$(aws s3 ls "s3://$S3_BUCKET/" --endpoint-url "https://$S3_ENDPOINT" | grep "backup_${NOME_INSTANCIA}_" | awk '{print $4}')
+    local arquivos_s3=$(aws s3 ls "s3://$S3_BUCKET/" --endpoint-url "https://$S3_ENDPOINT" --profile idrivee2 | grep "backup_${NOME_INSTANCIA}_" | awk '{print $4}')
     
     local removidos=0
     for arquivo in $arquivos_s3; do
         local data_arquivo=$(echo "$arquivo" | grep -o '[0-9]\{8\}_[0-9]\{6\}' | cut -d'_' -f1)
         if [ ! -z "$data_arquivo" ] && [ "$data_arquivo" -lt "$data_limite" ]; then
-            if aws s3 rm "s3://$S3_BUCKET/$arquivo" --endpoint-url "https://$S3_ENDPOINT" > /dev/null 2>&1; then
+            if aws s3 rm "s3://$S3_BUCKET/$arquivo" --endpoint-url "https://$S3_ENDPOINT" --profile idrivee2 > /dev/null 2>&1; then
                 removidos=$((removidos + 1))
             fi
         fi
@@ -2243,23 +2263,19 @@ fi
 
 ## Configura credenciais AWS
 msg "$BRANCO" "🔑 Configurando credenciais AWS..."
-export AWS_ACCESS_KEY_ID="$S3_ACCESS_KEY"
-export AWS_SECRET_ACCESS_KEY="$S3_SECRET_KEY"
-export AWS_DEFAULT_REGION="$S3_REGION"
-aws configure set default.s3.endpoint_url "https://$S3_ENDPOINT"
-aws configure set default.s3.signature_version s3v4
+configurar_aws
 msg "$VERDE" "✅ Credenciais AWS configuradas"
 log_message "Credenciais AWS configuradas"
 
 ## Testa conectividade S3
 msg "$BRANCO" "🔗 Testando conectividade S3..."
-if aws s3 ls --endpoint-url "https://$S3_ENDPOINT" > /dev/null 2>&1; then
+if aws s3 ls --endpoint-url "https://$S3_ENDPOINT" --profile idrivee2 > /dev/null 2>&1; then
     msg "$VERDE" "✅ Conectividade S3 confirmada"
     log_message "Conectividade S3 confirmada"
     
     ## Verifica bucket existente
     S3_BUCKET_FINAL="${NEUROBOOST_INSTANCE}"
-    if aws s3 ls "s3://$S3_BUCKET_FINAL" --endpoint-url "https://$S3_ENDPOINT" > /dev/null 2>&1; then
+    if aws s3 ls "s3://$S3_BUCKET_FINAL" --endpoint-url "https://$S3_ENDPOINT" --profile idrivee2 > /dev/null 2>&1; then
         msg "$VERDE" "✅ Bucket $S3_BUCKET_FINAL confirmado"
         log_message "Bucket $S3_BUCKET_FINAL confirmado"
     else
@@ -2333,11 +2349,31 @@ verificar_aws_cli() {
 
 ## Função para configurar credenciais AWS
 configurar_aws() {
+    # Cria diretório .aws se não existir
+    mkdir -p ~/.aws
+    
+    # Cria arquivo de credenciais com profile idrivee2
+    cat > ~/.aws/credentials << EOF
+[idrivee2]
+aws_access_key_id = $S3_ACCESS_KEY
+aws_secret_access_key = $S3_SECRET_KEY
+EOF
+    
+    # Cria arquivo de configuração com profile idrivee2
+    cat > ~/.aws/config << EOF
+[profile idrivee2]
+region = $S3_REGION
+output = json
+s3 =
+    endpoint_url = https://$S3_ENDPOINT
+    signature_version = s3v4
+EOF
+    
+    # Define variáveis de ambiente como fallback
     export AWS_ACCESS_KEY_ID="$S3_ACCESS_KEY"
     export AWS_SECRET_ACCESS_KEY="$S3_SECRET_KEY"
     export AWS_DEFAULT_REGION="$S3_REGION"
-    aws configure set default.s3.endpoint_url "https://$S3_ENDPOINT"
-    aws configure set default.s3.signature_version s3v4
+    export AWS_PROFILE="idrivee2"
 }
 
 ## Função principal
@@ -2361,10 +2397,10 @@ main() {
     configurar_aws
     
     msg "$BRANCO" "🔗 Testando conectividade S3..."
-    if aws s3 ls --endpoint-url "https://$S3_ENDPOINT" > /dev/null 2>&1; then
+    if aws s3 ls --endpoint-url "https://$S3_ENDPOINT" --profile idrivee2 > /dev/null 2>&1; then
         msg "$VERDE" "✅ Conectividade S3 confirmada"
         
-        if aws s3 ls "s3://$S3_BUCKET" --endpoint-url "https://$S3_ENDPOINT" > /dev/null 2>&1; then
+        if aws s3 ls "s3://$S3_BUCKET" --endpoint-url "https://$S3_ENDPOINT" --profile idrivee2 > /dev/null 2>&1; then
             msg "$VERDE" "✅ Bucket $S3_BUCKET confirmado"
         else
             msg "$VERMELHO" "❌ Bucket $S3_BUCKET não encontrado"
@@ -2518,11 +2554,31 @@ msg() {
 
 ## Função para configurar credenciais AWS
 configurar_aws() {
+    # Cria diretório .aws se não existir
+    mkdir -p ~/.aws
+    
+    # Cria arquivo de credenciais com profile idrivee2
+    cat > ~/.aws/credentials << EOF
+[idrivee2]
+aws_access_key_id = $S3_ACCESS_KEY
+aws_secret_access_key = $S3_SECRET_KEY
+EOF
+    
+    # Cria arquivo de configuração com profile idrivee2
+    cat > ~/.aws/config << EOF
+[profile idrivee2]
+region = $S3_REGION
+output = json
+s3 =
+    endpoint_url = https://$S3_ENDPOINT
+    signature_version = s3v4
+EOF
+    
+    # Define variáveis de ambiente como fallback
     export AWS_ACCESS_KEY_ID="$S3_ACCESS_KEY"
     export AWS_SECRET_ACCESS_KEY="$S3_SECRET_KEY"
     export AWS_DEFAULT_REGION="$S3_REGION"
-    aws configure set default.s3.endpoint_url "https://$S3_ENDPOINT"
-    aws configure set default.s3.signature_version s3v4
+    export AWS_PROFILE="idrivee2"
 }
 
 ## Função para listar backups disponíveis
@@ -2532,7 +2588,7 @@ listar_backups() {
     
     msg "$AMARELO" "📋 Listando backups disponíveis para $nome_instancia..."
     
-    local backups=$(aws s3 ls "s3://$S3_BUCKET/" --endpoint-url "https://$S3_ENDPOINT" | grep "backup_${nome_instancia}_" | awk '{print $4}' | sort -r)
+    local backups=$(aws s3 ls "s3://$S3_BUCKET/" --endpoint-url "https://$S3_ENDPOINT" --profile idrivee2 | grep "backup_${nome_instancia}_" | awk '{print $4}' | sort -r)
     
     if [ -z "$backups" ]; then
         msg "$VERMELHO" "❌ Nenhum backup encontrado para a instância $nome_instancia"
@@ -2549,7 +2605,7 @@ listar_backups() {
     for backup in $backups; do
         local data_backup=$(echo "$backup" | grep -o '[0-9]\{8\}_[0-9]\{6\}')
         local data_formatada=$(echo "$data_backup" | sed 's/\([0-9]\{4\}\)\([0-9]\{2\}\)\([0-9]\{2\}\)_\([0-9]\{2\}\)\([0-9]\{2\}\)\([0-9]\{2\}\)/\3\/\2\/\1 \4:\5:\6/')
-        local tamanho=$(aws s3 ls "s3://$S3_BUCKET/$backup" --endpoint-url "https://$S3_ENDPOINT" --human-readable | awk '{print $3" "$4}')
+        local tamanho=$(aws s3 ls "s3://$S3_BUCKET/$backup" --endpoint-url "https://$S3_ENDPOINT" --profile idrivee2 --human-readable | awk '{print $3" "$4}')
         
         printf "   %2d) %s - %s (%s)\n" "$contador" "$data_formatada" "$backup" "$tamanho"
         lista_backups[$contador]="$backup"
@@ -2584,7 +2640,7 @@ restaurar_backup() {
     msg "$AMARELO" "⬇️ Baixando backup do S3..."
     mkdir -p "$temp_dir"
     
-    if aws s3 cp "s3://$S3_BUCKET/$arquivo_backup" "$temp_dir/$arquivo_backup" --endpoint-url "https://$S3_ENDPOINT"; then
+    if aws s3 cp "s3://$S3_BUCKET/$arquivo_backup" "$temp_dir/$arquivo_backup" --endpoint-url "https://$S3_ENDPOINT" --profile idrivee2; then
         msg "$VERDE" "✅ Backup baixado com sucesso"
     else
         msg "$VERMELHO" "❌ Falha no download do backup"
@@ -2770,12 +2826,12 @@ SCRIPTS DISPONÍVEIS:
 MONITORAMENTO:
 • Ver logs: tail -f /var/log/neuroboost_backup.log
 • Verificar crontab: crontab -l
-• Listar backups S3: aws s3 ls s3://${NEUROBOOST_INSTANCE}/ --endpoint-url https://$S3_ENDPOINT
+• Listar backups S3: aws s3 ls s3://${NEUROBOOST_INSTANCE}/ --endpoint-url https://$S3_ENDPOINT --profile idrivee2
 
 COMANDOS ÚTEIS:
 • Editar crontab: crontab -e
 • Remover backup automático: crontab -l | grep -v "backup.sh" | crontab -
-• Testar conectividade S3: aws s3 ls --endpoint-url https://$S3_ENDPOINT
+• Testar conectividade S3: aws s3 ls --endpoint-url https://$S3_ENDPOINT --profile idrivee2
 • Testar S3: sudo $PROJETO_DIR/scripts/test_s3.sh $NOME_INSTANCIA
 • Listar/Restaurar backups: sudo $PROJETO_DIR/scripts/restore.sh $NOME_INSTANCIA
 • Remover instalação: sudo $PROJETO_DIR/scripts/cleanup.sh $NOME_INSTANCIA
