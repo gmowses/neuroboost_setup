@@ -27,7 +27,7 @@
 ## ===================================================================================================
 
 ## Versão do script (SEMVER)
-VERSION="2.3.7"
+VERSION="2.3.9"
 
 ## Cores
 AMARELO="\e[33m"
@@ -145,9 +145,9 @@ verificar_requisitos_sistema() {
 
 ## Função para logging
 log_message() {
-    local message="$1"
-    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
-    echo "[$timestamp] $message" >> "$LOG_FILE"
+    local message="\$1"
+    local timestamp=\$(date '+%Y-%m-%d %H:%M:%S')
+    echo "[\$timestamp] \$message" >> "\$LOG_FILE"
 }
 
 ## Função para exibir mensagens coloridas e logar
@@ -160,7 +160,7 @@ msg() {
     echo -e "${cor}${texto}${RESET}"
     
     # Salva no log sem cor
-    log_message "$clean_text"
+    log_message "\$clean_text"
 }
 
 ## Função para executar comandos e logar
@@ -2083,8 +2083,8 @@ AZUL="\e[34m"
 RESET="\e[0m"
 
 ## Configurações padrão
-DATA_BACKUP=$(date +%Y%m%d_%H%M%S)
-LOG_FILE="backup_${DATA_BACKUP}.log"
+DATA_BACKUP=\$(date +%Y%m%d_%H%M%S)
+LOG_FILE="backup_\${DATA_BACKUP}.log"
 COMPRESSAO_NIVEL=6
 MANTER_BACKUPS=7  # Manter últimos 7 backups
 
@@ -2093,7 +2093,7 @@ S3_ENDPOINT="$S3_ENDPOINT"
 S3_ACCESS_KEY="$S3_ACCESS_KEY"
 S3_SECRET_KEY="$S3_SECRET_KEY"
 S3_REGION="$S3_REGION"
-RETENCAO_DIAS=$BACKUP_RETENTION_DAYS  # Manter backups por X dias no S3
+RETENCAO_DIAS=\$BACKUP_RETENTION_DAYS  # Manter backups por X dias no S3
 
 ## Função para logging
 log_message() {
@@ -2104,46 +2104,46 @@ log_message() {
 
 ## Função para exibir mensagens coloridas e logar
 msg() {
-    local cor=$1
-    local texto=$2
-    local clean_text=$(echo -e "${texto}" | sed 's/\x1b\[[0-9;]*m//g')
-    echo -e "${cor}${texto}${RESET}"
+    local cor=\$1
+    local texto=\$2
+    local clean_text=\$(echo -e "\${texto}" | sed 's/\x1b\[[0-9;]*m//g')
+    echo -e "\${cor}\${texto}\${RESET}"
     log_message "$clean_text"
 }
 
 ## Função para verificar e instalar AWS CLI
 verificar_aws_cli() {
     if ! command -v aws &> /dev/null; then
-        msg "$AMARELO" "📦 AWS CLI não encontrado, instalando..."
+        msg "\$AMARELO" "📦 AWS CLI não encontrado, instalando..."
         
-        if [[ $(uname -m) == "arm64" ]]; then
+        if [[ \$(uname -m) == "arm64" ]]; then
             ARCH="aarch64"
         else
             ARCH="x86_64"
         fi
         
-        curl -s "https://awscli.amazonaws.com/awscli-exe-linux-${ARCH}.zip" -o "/tmp/awscliv2.zip"
+        curl -s "https://awscli.amazonaws.com/awscli-exe-linux-\${ARCH}.zip" -o "/tmp/awscliv2.zip"
         unzip -q "/tmp/awscliv2.zip" -d "/tmp/"
         /tmp/aws/install --update > /dev/null 2>&1
         rm -rf /tmp/aws /tmp/awscliv2.zip
         
         if command -v aws &> /dev/null; then
-            msg "$VERDE" "✅ AWS CLI instalado com sucesso"
+            msg "\$VERDE" "✅ AWS CLI instalado com sucesso"
         else
-            msg "$VERMELHO" "❌ Falha na instalação do AWS CLI"
+            msg "\$VERMELHO" "❌ Falha na instalação do AWS CLI"
             exit 1
         fi
     fi
     
     # Verifica se o perfil idrivee2 existe
-    msg "$AZUL" "🔍 Verificando perfil AWS 'idrivee2'..."
+    msg "\$AZUL" "🔍 Verificando perfil AWS 'idrivee2'..."
     if aws configure list --profile idrivee2 > /dev/null 2>&1; then
-        msg "$VERDE" "✅ Perfil 'idrivee2' encontrado"
+        msg "\$VERDE" "✅ Perfil 'idrivee2' encontrado"
         echo "📋 Configurações do perfil:"
         aws configure list --profile idrivee2 2>/dev/null || echo "Erro ao listar configurações"
     else
-        msg "$VERMELHO" "❌ Perfil 'idrivee2' não encontrado!"
-        msg "$AMARELO" "⚠️ Execute o Setup novamente para configurar as credenciais S3"
+        msg "\$VERMELHO" "❌ Perfil 'idrivee2' não encontrado!"
+        msg "\$AMARELO" "⚠️ Execute o Setup novamente para configurar as credenciais S3"
         exit 1
     fi
 }
@@ -2191,28 +2191,28 @@ verificar_s3() {
 
 ## Função para backup de volumes
 backup_volumes() {
-    local backup_dir=$1
-    local volumes_dir="$backup_dir/volumes"
+    local backup_dir=\$1
+    local volumes_dir="\$backup_dir/volumes"
     
-    msg "$AMARELO" "💾 Iniciando backup dos volumes Docker..."
+    msg "\$AMARELO" "💾 Iniciando backup dos volumes Docker..."
     
     local volumes=(
-        "${NOME_INSTANCIA}_postgres_data"
-        "${NOME_INSTANCIA}_minio_data"
-        "${NOME_INSTANCIA}_redis_data"
-        "${NOME_INSTANCIA}_rabbitmq_data"
-        "${NOME_INSTANCIA}_n8n_data"
-        "${NOME_INSTANCIA}_faq_logs"
-        "${NOME_INSTANCIA}_chatdigi_backend_uploads"
-        "${NOME_INSTANCIA}_chatdigi_backend_logs"
+        "\${NOME_INSTANCIA}_postgres_data"
+        "\${NOME_INSTANCIA}_minio_data"
+        "\${NOME_INSTANCIA}_redis_data"
+        "\${NOME_INSTANCIA}_rabbitmq_data"
+        "\${NOME_INSTANCIA}_n8n_data"
+        "\${NOME_INSTANCIA}_faq_logs"
+        "\${NOME_INSTANCIA}_chatdigi_backend_uploads"
+        "\${NOME_INSTANCIA}_chatdigi_backend_logs"
     )
     
-    for volume in "${volumes[@]}"; do
-        if docker volume inspect "$volume" &> /dev/null; then
-            msg "$AZUL" "  📦 Fazendo backup do volume: $volume"
-            docker run --rm -v "$volume:/source:ro" -v "$volumes_dir:/backup" alpine:latest tar czf "/backup/${volume}.tar.gz" -C /source .
-            if [ $? -eq 0 ]; then
-                msg "$VERDE" "    ✅ Volume $volume - backup concluído"
+    for volume in "\${volumes[@]}"; do
+        if docker volume inspect "\$volume" &> /dev/null; then
+            msg "\$AZUL" "  📦 Fazendo backup do volume: \$volume"
+            docker run --rm -v "\$volume:/source:ro" -v "\$volumes_dir:/backup" alpine:latest tar czf "/backup/\${volume}.tar.gz" -C /source .
+            if [ \$? -eq 0 ]; then
+                msg "\$VERDE" "    ✅ Volume \$volume - backup concluído"
             fi
         fi
     done
@@ -2220,35 +2220,35 @@ backup_volumes() {
 
 ## Função para backup dos bancos
 backup_databases() {
-    local backup_dir=$1
-    local db_dir="$backup_dir/databases"
+    local backup_dir=\$1
+    local db_dir="\$backup_dir/databases"
     
-    msg "$AMARELO" "🗄️ Iniciando backup dos bancos de dados..."
+    msg "\$AMARELO" "🗄️ Iniciando backup dos bancos de dados..."
     
-    if docker ps | grep -q "${NOME_INSTANCIA}_postgres"; then
+    if docker ps | grep -q "\${NOME_INSTANCIA}_postgres"; then
         local databases=("postgres" "n8n_queue" "chatdigi")
         
-        for db in "${databases[@]}"; do
-            msg "$AZUL" "  🗃️ Fazendo backup do banco: $db"
-            if docker exec "${NOME_INSTANCIA}_postgres" pg_dump -U postgres "$db" > "$db_dir/${db}_${DATA_BACKUP}.sql"; then
-                gzip "$db_dir/${db}_${DATA_BACKUP}.sql"
-                msg "$VERDE" "    ✅ Banco $db - backup concluído"
+        for db in "\${databases[@]}"; do
+            msg "\$AZUL" "  🗃️ Fazendo backup do banco: \$db"
+            if docker exec "\${NOME_INSTANCIA}_postgres" pg_dump -U postgres "\$db" > "\$db_dir/\${db}_\${DATA_BACKUP}.sql"; then
+                gzip "\$db_dir/\${db}_\${DATA_BACKUP}.sql"
+                msg "\$VERDE" "    ✅ Banco \$db - backup concluído"
             fi
         done
         
-        if docker exec "${NOME_INSTANCIA}_postgres" pg_dumpall -U postgres > "$db_dir/postgresql_global_${DATA_BACKUP}.sql"; then
-            gzip "$db_dir/postgresql_global_${DATA_BACKUP}.sql"
-            msg "$VERDE" "    ✅ Backup global PostgreSQL concluído"
+        if docker exec "\${NOME_INSTANCIA}_postgres" pg_dumpall -U postgres > "\$db_dir/postgresql_global_\${DATA_BACKUP}.sql"; then
+            gzip "\$db_dir/postgresql_global_\${DATA_BACKUP}.sql"
+            msg "\$VERDE" "    ✅ Backup global PostgreSQL concluído"
         fi
     fi
 }
 
 ## Função para backup das configurações
 backup_configs() {
-    local backup_dir=$1
-    local config_dir="$backup_dir/configs"
+    local backup_dir=\$1
+    local config_dir="\$backup_dir/configs"
     
-    msg "$AMARELO" "⚙️ Iniciando backup das configurações..."
+    msg "\$AMARELO" "⚙️ Iniciando backup das configurações..."
     
     local config_files=(
         "docker-compose.traefik-portainer.yml"
@@ -2263,27 +2263,27 @@ backup_configs() {
         "backup.sh"
     )
     
-    for file in "${config_files[@]}"; do
-        if [ -f "$file" ]; then
-            cp "$file" "$config_dir/"
-            msg "$VERDE" "  ✅ Arquivo copiado: $file"
+    for file in "\${config_files[@]}"; do
+        if [ -f "\$file" ]; then
+            cp "\$file" "\$config_dir/"
+            msg "\$VERDE" "  ✅ Arquivo copiado: \$file"
         fi
     done
 }
 
 ## Função para enviar trap Zabbix
 enviar_trap_zabbix() {
-    local status=$1
-    local message="$2"
-    local item_key="$3"
+    local status=\$1
+    local message="\$2"
+    local item_key="\$3"
     
     # Só envia trap se Zabbix estiver configurado
-    if [ -n "$ZBX_SERVER_HOST" ]; then
+    if [ -n "\$ZBX_SERVER_HOST" ]; then
         # Verifica se o container do Zabbix Agent está rodando
-        if docker ps --format "table {{.Names}}" | grep -q "${NOME_INSTANCIA}_zabbix_agent2"; then
-            local timestamp=$(date +%s)
-            echo "$ZBX_HOSTNAME $item_key $timestamp $status" | docker exec -i "${NOME_INSTANCIA}_zabbix_agent2" zabbix_sender -z "$ZBX_SERVER_HOST" -p 10051 -T -i - &> /dev/null
-            echo "📡 Trap Zabbix enviado: $item_key = $status"
+        if docker ps --format "table {{.Names}}" | grep -q "\${NOME_INSTANCIA}_zabbix_agent2"; then
+            local timestamp=\$(date +%s)
+            echo "\$ZBX_HOSTNAME \$item_key \$timestamp \$status" | docker exec -i "\${NOME_INSTANCIA}_zabbix_agent2" zabbix_sender -z "\$ZBX_SERVER_HOST" -p 10051 -T -i - &> /dev/null
+            echo "📡 Trap Zabbix enviado: \$item_key = \$status"
         else
             echo "⚠️ Container Zabbix Agent não está rodando, trap não enviado"
         fi
@@ -2344,54 +2344,54 @@ limpar_s3_antigos() {
 
 ## Função principal
 main() {
-    NOME_INSTANCIA=${1:-""}
-    DESTINO_BACKUP=${2:-"/tmp/neuroboost_backup"}
+    NOME_INSTANCIA=\${1:-""}
+    DESTINO_BACKUP=\${2:-"/tmp/neuroboost_backup"}
     
     # Define S3_BUCKET após ter NOME_INSTANCIA
-    S3_BUCKET="${NOME_INSTANCIA}"
+    S3_BUCKET="\${NOME_INSTANCIA}"
     
     echo "🔍 === DEBUG: VARIÁVEIS DE AMBIENTE ==="
-    echo "📋 NOME_INSTANCIA: $NOME_INSTANCIA"
-    echo "📋 S3_ENDPOINT: $S3_ENDPOINT"
-    echo "📋 S3_BUCKET: $S3_BUCKET"
-    echo "📋 S3_REGION: $S3_REGION"
-    echo "📋 DESTINO_BACKUP: $DESTINO_BACKUP"
-    echo "📋 DATA_BACKUP: $DATA_BACKUP"
+    echo "📋 NOME_INSTANCIA: \$NOME_INSTANCIA"
+    echo "📋 S3_ENDPOINT: \$S3_ENDPOINT"
+    echo "📋 S3_BUCKET: \$S3_BUCKET"
+    echo "📋 S3_REGION: \$S3_REGION"
+    echo "📋 DESTINO_BACKUP: \$DESTINO_BACKUP"
+    echo "📋 DATA_BACKUP: \$DATA_BACKUP"
     echo "📋 AWS Profile: idrivee2"
     echo "🔍 ========================================"
     echo ""
     
-    if [ -z "$NOME_INSTANCIA" ]; then
+    if [ -z "\$NOME_INSTANCIA" ]; then
         echo "❌ Nome da instância não fornecido!"
-        echo "Uso: $0 <NOME_INSTANCIA>"
+        echo "Uso: \$0 <NOME_INSTANCIA>"
         exit 1
     fi
     
     verificar_aws_cli
     verificar_s3
     
-    mkdir -p "$DESTINO_BACKUP"
-    local backup_dir="$DESTINO_BACKUP/backup_${NOME_INSTANCIA}_${DATA_BACKUP}"
+    mkdir -p "\$DESTINO_BACKUP"
+    local backup_dir="\$DESTINO_BACKUP/backup_\${NOME_INSTANCIA}_\${DATA_BACKUP}"
     
-    mkdir -p "$backup_dir/volumes"
-    mkdir -p "$backup_dir/databases"
-    mkdir -p "$backup_dir/configs"
+    mkdir -p "\$backup_dir/volumes"
+    mkdir -p "\$backup_dir/databases"
+    mkdir -p "\$backup_dir/configs"
     
-    backup_volumes "$backup_dir"
-    backup_databases "$backup_dir"
-    backup_configs "$backup_dir"
+    backup_volumes "\$backup_dir"
+    backup_databases "\$backup_dir"
+    backup_configs "\$backup_dir"
     
-    cd "$DESTINO_BACKUP"
-    tar czf "backup_${NOME_INSTANCIA}_${DATA_BACKUP}.tar.gz" "backup_${NOME_INSTANCIA}_${DATA_BACKUP}"
+    cd "\$DESTINO_BACKUP"
+    tar czf "backup_\${NOME_INSTANCIA}_\${DATA_BACKUP}.tar.gz" "backup_\${NOME_INSTANCIA}_\${DATA_BACKUP}"
     
-    if [ $? -eq 0 ]; then
-        rm -rf "backup_${NOME_INSTANCIA}_${DATA_BACKUP}"
-        local arquivo_backup="$DESTINO_BACKUP/backup_${NOME_INSTANCIA}_${DATA_BACKUP}.tar.gz"
+    if [ \$? -eq 0 ]; then
+        rm -rf "backup_\${NOME_INSTANCIA}_\${DATA_BACKUP}"
+        local arquivo_backup="\$DESTINO_BACKUP/backup_\${NOME_INSTANCIA}_\${DATA_BACKUP}.tar.gz"
         
-        if tar tzf "$arquivo_backup" > /dev/null 2>&1; then
-            if enviar_para_s3 "$arquivo_backup"; then
+        if tar tzf "\$arquivo_backup" > /dev/null 2>&1; then
+            if enviar_para_s3 "\$arquivo_backup"; then
                 limpar_s3_antigos
-                msg "$VERDE" "✅ Backup concluído com sucesso!"
+                msg "\$VERDE" "✅ Backup concluído com sucesso!"
                 enviar_trap_zabbix "1" "Backup realizado com sucesso" "neuroboost.backup.status"
                 exit 0
             else
@@ -2404,11 +2404,11 @@ main() {
         enviar_trap_zabbix "0" "Falha na compactação do backup" "neuroboost.backup.status"
     fi
     
-    msg "$VERMELHO" "❌ Backup falhou!"
+    msg "\$VERMELHO" "❌ Backup falhou!"
     exit 1
 }
 
-main "$@"
+main "\$@"
 BACKUP_SCRIPT_EOF
 
 ## Torna o script executável
