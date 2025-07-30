@@ -18,7 +18,7 @@
 ## ===================================================================================================
 
 ## Versão do script (SEMVER)
-VERSION="2.2.0"
+VERSION="2.3.0"
 
 ## Cores
 AMARELO="\e[33m"
@@ -2140,10 +2140,10 @@ enviar_para_s3() {
     
     msg "$AMARELO" "☁️ Enviando backup para S3..."
     
-    local cmd="aws s3 cp $arquivo_backup s3://$S3_BUCKET/$nome_arquivo --endpoint-url https://$S3_ENDPOINT --profile idrivee2"
+    local cmd="aws s3 cp $arquivo_backup s3://$S3_BUCKET/ --endpoint-url https://$S3_ENDPOINT --profile idrivee2"
     echo "📋 Executando: $cmd"
     
-    local output=$(aws s3 cp "$arquivo_backup" "s3://$S3_BUCKET/$nome_arquivo" --endpoint-url https://$S3_ENDPOINT --profile idrivee2 2>&1)
+    local output=$(aws s3 cp "$arquivo_backup" "s3://$S3_BUCKET/" --endpoint-url https://$S3_ENDPOINT --profile idrivee2 2>&1)
     local exit_code=$?
     
     echo "📊 Saída: $output"
@@ -2350,7 +2350,7 @@ RESET="\e[0m"
 S3_ENDPOINT="$S3_ENDPOINT"
 S3_ACCESS_KEY="$S3_ACCESS_KEY"
 S3_SECRET_KEY="$S3_SECRET_KEY"
-S3_BUCKET=""
+S3_BUCKET="${NOME_INSTANCIA}"
 S3_REGION="$S3_REGION"
 
 ## Função para exibir mensagens coloridas
@@ -2553,7 +2553,7 @@ RESET="\e[0m"
 S3_ENDPOINT="$S3_ENDPOINT"
 S3_ACCESS_KEY="$S3_ACCESS_KEY"
 S3_SECRET_KEY="$S3_SECRET_KEY"
-S3_BUCKET=""
+S3_BUCKET="${nome_instancia}"
 S3_REGION="$S3_REGION"
 
 ## Função para exibir mensagens coloridas
