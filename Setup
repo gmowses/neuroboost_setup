@@ -27,7 +27,7 @@
 ## ===================================================================================================
 
 ## Versão do script (SEMVER)
-VERSION="2.3.3"
+VERSION="2.3.4"
 
 ## Cores
 AMARELO="\e[33m"
@@ -2140,7 +2140,7 @@ verificar_aws_cli() {
     if aws configure list --profile idrivee2 > /dev/null 2>&1; then
         msg "$VERDE" "✅ Perfil 'idrivee2' encontrado"
         echo "📋 Configurações do perfil:"
-        aws configure list --profile idrivee2
+        aws configure list --profile idrivee2 2>/dev/null || echo "Erro ao listar configurações"
     else
         msg "$VERMELHO" "❌ Perfil 'idrivee2' não encontrado!"
         msg "$AMARELO" "⚠️ Execute o Setup novamente para configurar as credenciais S3"
