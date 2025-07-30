@@ -9,10 +9,19 @@
 ##   NEUROBOOST_INSTANCE     - Nome da instância (ex: cliente1, empresa2) [OBRIGATÓRIO]
 ##   NEUROBOOST_EMAIL        - Email para notificações SSL (padrão: ssl@neuroboost.digital)
 ##   NEUROBOOST_AUTO_CONFIRM - Auto-confirmar instalação (true/false)
+##   ZABBIX_SERVER_HOST      - IP do servidor Zabbix para monitoramento
+##   S3_ENDPOINT_BACKUP      - Endpoint S3 para backup (ex: s3.amazonaws.com)
+##   S3_ACCESS_KEY_BACKUP    - Access Key do S3 para backup
+##   S3_SECRET_KEY_BACKUP    - Secret Key do S3 para backup
+##   S3_REGION_BACKUP        - Região do S3 para backup (padrão: us-da-1)
 ##
 ## EXEMPLO DE USO AUTOMATIZADO:
 ##   export NEUROBOOST_INSTANCE="cliente1"
 ##   export NEUROBOOST_AUTO_CONFIRM="true"
+##   export S3_ENDPOINT_BACKUP="s3.amazonaws.com"
+##   export S3_ACCESS_KEY_BACKUP="sua_access_key"
+##   export S3_SECRET_KEY_BACKUP="sua_secret_key"
+##   export S3_REGION_BACKUP="us-east-1"
 ##   bash <(curl -sSL https://raw.githubusercontent.com/gmowses/neuroboost_setup/refs/heads/main/Setup)
 ##
 ## ===================================================================================================
@@ -397,6 +406,80 @@ else
     msg "$VERDE" "✓ Email (padrão): $EMAIL_SSL"
 fi
 
+## Configurações do Zabbix Agent 2
+echo ""
+if [ -n "$ZABBIX_SERVER_HOST" ]; then
+    # Usa variável de ambiente se definida
+    ZBX_SERVER_HOST="$ZABBIX_SERVER_HOST"
+    msg "$VERDE" "✓ Servidor Zabbix (variável): $ZBX_SERVER_HOST"
+else
+    # Pergunta interativamente se não definida
+    msg "$BRANCO" "Digite o IP do servidor Zabbix (deixe vazio para pular):"
+    read -p "> " zbx_server_input
+    
+    if [ -n "$zbx_server_input" ]; then
+        ZBX_SERVER_HOST="$zbx_server_input"
+        msg "$VERDE" "✓ Servidor Zabbix: $ZBX_SERVER_HOST"
+    else
+        ZBX_SERVER_HOST=""
+        msg "$AMARELO" "⚠️ Zabbix Agent não será configurado (servidor não informado)"
+    fi
+fi
+
+# Define nome do agent como nome da instância
+ZBX_HOSTNAME="$NOME_INSTANCIA"
+
+## Configurações do S3 para backup
+echo ""
+if [ -n "$S3_ENDPOINT_BACKUP" ]; then
+    # Usa variável de ambiente se definida
+    S3_ENDPOINT="$S3_ENDPOINT_BACKUP"
+    msg "$VERDE" "✓ S3 Endpoint (variável): $S3_ENDPOINT"
+else
+    # Pergunta interativamente se não definida
+    msg "$BRANCO" "Digite o endpoint S3 para backup (ex: s3.amazonaws.com, deixe vazio para pular):"
+    read -p "> " s3_endpoint_input
+    
+    if [ -n "$s3_endpoint_input" ]; then
+        S3_ENDPOINT="$s3_endpoint_input"
+        msg "$VERDE" "✓ S3 Endpoint: $S3_ENDPOINT"
+    else
+        S3_ENDPOINT=""
+        msg "$AMARELO" "⚠️ Backup S3 não será configurado (endpoint não informado)"
+    fi
+fi
+
+if [ -n "$S3_ENDPOINT" ]; then
+    if [ -n "$S3_ACCESS_KEY_BACKUP" ]; then
+        S3_ACCESS_KEY="$S3_ACCESS_KEY_BACKUP"
+        msg "$VERDE" "✓ S3 Access Key (variável): ****************"
+    else
+        msg "$BRANCO" "Digite a Access Key do S3:"
+        read -p "> " S3_ACCESS_KEY
+        msg "$VERDE" "✓ S3 Access Key: ****************"
+    fi
+    
+    if [ -n "$S3_SECRET_KEY_BACKUP" ]; then
+        S3_SECRET_KEY="$S3_SECRET_KEY_BACKUP"
+        msg "$VERDE" "✓ S3 Secret Key (variável): ****************"
+    else
+        msg "$BRANCO" "Digite a Secret Key do S3:"
+        read -s -p "> " S3_SECRET_KEY
+        echo ""
+        msg "$VERDE" "✓ S3 Secret Key: ****************"
+    fi
+    
+    if [ -n "$S3_REGION_BACKUP" ]; then
+        S3_REGION="$S3_REGION_BACKUP"
+        msg "$VERDE" "✓ S3 Region (variável): $S3_REGION"
+    else
+        msg "$BRANCO" "Digite a região do S3 (padrão: us-da-1):"
+        read -p "> " s3_region_input
+        S3_REGION="${s3_region_input:-us-da-1}"
+        msg "$VERDE" "✓ S3 Region: $S3_REGION"
+    fi
+fi
+
 ## Gera senhas automaticamente
 msg "$AMARELO" ""
 msg "$AMARELO" "🔐 Gerando senhas seguras..."
@@ -446,6 +529,12 @@ msg "$BRANCO" "  • FAQ System: $VERDE$URL_FAQ"
 msg "$BRANCO" "  • ChatDigi Frontend: $VERDE$URL_CHATDIGI_FRONTEND"
 msg "$BRANCO" "  • ChatDigi Backend: $VERDE$URL_CHATDIGI_BACKEND"
 echo ""
+if [ -n "$ZBX_SERVER_HOST" ]; then
+    msg "$BRANCO" "Monitoramento Zabbix:"
+    msg "$BRANCO" "  • Servidor: $VERDE$ZBX_SERVER_HOST"
+    msg "$BRANCO" "  • Agent Name: $VERDE$ZBX_HOSTNAME"
+    echo ""
+fi
 
 if [ "$NEUROBOOST_AUTO_CONFIRM" = "true" ]; then
     # Confirma automaticamente se variável definida
@@ -1241,6 +1330,38 @@ networks:
     name: ${NOME_INSTANCIA}_network
 EOF
 
+## Cria Zabbix Agent 2 (se configurado)
+if [ -n "$ZBX_SERVER_HOST" ]; then
+    cat > docker-compose.zabbix.yml << EOF
+version: '3.8'
+
+services:
+  zabbix-agent2:
+    image: zabbix/zabbix-agent2:alpine-6.4-latest
+    container_name: ${NOME_INSTANCIA}_zabbix_agent2
+    restart: unless-stopped
+    environment:
+      - ZBX_SERVER_HOST=${ZBX_SERVER_HOST}
+      - ZBX_HOSTNAME=${ZBX_HOSTNAME}
+      - TZ=America/Sao_Paulo
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /dev:/host/dev:ro
+      - /etc/localtime:/etc/localtime:ro
+    networks:
+      - ${NOME_INSTANCIA}_network
+    privileged: true
+    pid: host
+
+networks:
+  ${NOME_INSTANCIA}_network:
+    external: true
+    name: ${NOME_INSTANCIA}_network
+EOF
+fi
+
 msg "$VERDE" "✅ Arquivos docker-compose criados"
 
 
@@ -1521,6 +1642,19 @@ else
     exit 1
 fi
 
+# Inicia Zabbix Agent 2 (se configurado)
+if [ -n "$ZBX_SERVER_HOST" ]; then
+    msg "$AMARELO" "📊 Iniciando Zabbix Agent 2..."
+    if exec_log "docker compose -f docker-compose.zabbix.yml up -d" "Deploy do Zabbix Agent 2"; then
+        msg "$VERDE" "✅ Zabbix Agent 2 iniciado"
+        log_message "Zabbix Agent 2 iniciado com sucesso"
+    else
+        msg "$VERMELHO" "❌ Erro ao iniciar Zabbix Agent 2"
+        log_message "ERRO: Falha ao iniciar Zabbix Agent 2"
+        exit 1
+    fi
+fi
+
 msg "$VERDE" "✅ Todos os serviços iniciados com sucesso"
 
 ## Aguarda containers ficarem prontos
@@ -1538,6 +1672,11 @@ aguardar_container "${NOME_INSTANCIA}_faq_system"
 aguardar_container "${NOME_INSTANCIA}_chatdigi_backend"
 aguardar_container "${NOME_INSTANCIA}_chatdigi_frontend"
 aguardar_container "${NOME_INSTANCIA}_qr_generator"
+
+# Aguarda Zabbix Agent 2 (se configurado)
+if [ -n "$ZBX_SERVER_HOST" ]; then
+    aguardar_container "${NOME_INSTANCIA}_zabbix_agent2"
+fi
 
 ## ===================================================================================================
 ##                                    CONFIGURAÇÃO DO PORTAINER
@@ -2132,6 +2271,25 @@ backup_configs() {
     done
 }
 
+## Função para enviar trap Zabbix
+enviar_trap_zabbix() {
+    local status=$1
+    local message="$2"
+    local item_key="$3"
+    
+    # Só envia trap se Zabbix estiver configurado
+    if [ -n "$ZBX_SERVER_HOST" ]; then
+        # Verifica se o container do Zabbix Agent está rodando
+        if docker ps --format "table {{.Names}}" | grep -q "${NOME_INSTANCIA}_zabbix_agent2"; then
+            local timestamp=$(date +%s)
+            echo "$ZBX_HOSTNAME $item_key $timestamp $status" | docker exec -i "${NOME_INSTANCIA}_zabbix_agent2" zabbix_sender -z "$ZBX_SERVER_HOST" -p 10051 -T -i - &> /dev/null
+            echo "📡 Trap Zabbix enviado: $item_key = $status"
+        else
+            echo "⚠️ Container Zabbix Agent não está rodando, trap não enviado"
+        fi
+    fi
+}
+
 ## Função para enviar para S3
 enviar_para_s3() {
     local arquivo_backup=$1
@@ -2234,9 +2392,16 @@ main() {
             if enviar_para_s3 "$arquivo_backup"; then
                 limpar_s3_antigos
                 msg "$VERDE" "✅ Backup concluído com sucesso!"
+                enviar_trap_zabbix "1" "Backup realizado com sucesso" "neuroboost.backup.status"
                 exit 0
+            else
+                enviar_trap_zabbix "0" "Falha no envio do backup para S3" "neuroboost.backup.status"
             fi
+        else
+            enviar_trap_zabbix "0" "Falha na criação do arquivo de backup" "neuroboost.backup.status"
         fi
+    else
+        enviar_trap_zabbix "0" "Falha na compactação do backup" "neuroboost.backup.status"
     fi
     
     msg "$VERMELHO" "❌ Backup falhou!"
@@ -2860,6 +3025,29 @@ exec_cleanup() {
     return $exit_code
 }
 
+## Função para enviar trap Zabbix
+enviar_trap_zabbix() {
+    local status=$1
+    local message="$2"
+    local item_key="$3"
+    
+    # Obtém configurações do Zabbix se disponíveis
+    local zbx_server_host="${ZBX_SERVER_HOST:-}"
+    local zbx_hostname="${ZBX_HOSTNAME:-$(hostname)}"
+    
+    # Só envia trap se Zabbix estiver configurado
+    if [ -n "$zbx_server_host" ]; then
+        # Verifica se o container do Zabbix Agent está rodando
+        if docker ps --format "table {{.Names}}" | grep -q "${NOME_INSTANCIA}_zabbix_agent2"; then
+            local timestamp=$(date +%s)
+            echo "$zbx_hostname $item_key $timestamp $status" | docker exec -i "${NOME_INSTANCIA}_zabbix_agent2" zabbix_sender -z "$zbx_server_host" -p 10051 -T -i - &> /dev/null
+            log_message "Trap Zabbix enviado: $item_key = $status"
+        else
+            log_message "Container Zabbix Agent não está rodando, trap não enviado"
+        fi
+    fi
+}
+
 ## Função principal de limpeza
 main() {
     msg "$AMARELO" "╔════════════════════════════════════════════════════════════════╗"
@@ -2920,6 +3108,9 @@ main() {
         msg "$VERMELHO" "⚠️ ATENÇÃO: Uso do disco ainda está alto (${disk_usage}%)"
         msg "$AMARELO" "💡 Considere verificar arquivos grandes manualmente"
         log_message "AVISO: Uso do disco alto após limpeza: ${disk_usage}%"
+        enviar_trap_zabbix "0" "Limpeza concluída mas uso do disco ainda alto: ${disk_usage}%" "neuroboost.cleanup.status"
+    else
+        enviar_trap_zabbix "1" "Limpeza do sistema concluída com sucesso. Uso do disco: ${disk_usage}%" "neuroboost.cleanup.status"
     fi
     
     echo ""
@@ -2974,11 +3165,7 @@ BACKUP MANUAL:
 • O backup será enviado automaticamente para S3
 
 CONFIGURAÇÕES S3:
-• Endpoint: $S3_ENDPOINT
-• Bucket: ${NEUROBOOST_INSTANCE}
-• Região: $S3_REGION
-• Intervalo: A cada $BACKUP_INTERVAL_HOURS horas
-• Retenção: $BACKUP_RETENTION_DAYS dias
+$(if [ -n "$S3_ENDPOINT" ]; then echo "• Endpoint: $S3_ENDPOINT"; echo "• Bucket: ${NEUROBOOST_INSTANCE}"; echo "• Região: $S3_REGION"; echo "• Intervalo: A cada $BACKUP_INTERVAL_HOURS horas"; echo "• Retenção: $BACKUP_RETENTION_DAYS dias"; echo "• Status: Configurado"; else echo "• Status: Não configurado (endpoint não informado)"; echo "• Para configurar: defina S3_ENDPOINT_BACKUP, S3_ACCESS_KEY_BACKUP e S3_SECRET_KEY_BACKUP"; echo "• Backup funcionará localmente sem envio para S3"; fi)
 
 SCRIPTS DISPONÍVEIS:
 • Backup: $PROJETO_DIR/scripts/backup.sh
@@ -3008,6 +3195,9 @@ LIMPEZA AUTOMÁTICA DO SISTEMA:
 • Limpa cache do Docker, pip, npm e outros
 • Logs salvos em: /var/log/neuroboost_cleanup.log
 • Alerta se uso do disco > 85%
+
+MONITORAMENTO ZABBIX:
+$(if [ -n "$ZBX_SERVER_HOST" ]; then echo "• Servidor Zabbix: $ZBX_SERVER_HOST"; echo "• Agent Name: $ZBX_HOSTNAME"; echo "• Container: ${NOME_INSTANCIA}_zabbix_agent2"; echo "• Status: docker ps | grep zabbix"; echo "• Logs: docker logs ${NOME_INSTANCIA}_zabbix_agent2"; echo "• Traps configurados (via container):"; echo "  - neuroboost.backup.status (1=sucesso, 0=erro)"; echo "  - neuroboost.cleanup.status (1=sucesso, 0=erro/disco alto)"; else echo "• Não configurado (servidor não informado)"; fi)
 
 ===================================================
 EOF
@@ -3042,6 +3232,17 @@ log_message "Sincronização NTP: $(timedatectl show --property=NTPSynchronized 
 log_message "Diretório do projeto: $PROJETO_DIR"
 log_message "Credenciais salvas em: $PROJETO_DIR/credenciais.txt"
 log_message "Log da instalação: $LOG_FILE"
+if [ -n "$ZBX_SERVER_HOST" ]; then
+    log_message "Zabbix Agent 2: Configurado (Servidor: $ZBX_SERVER_HOST, Agent: $ZBX_HOSTNAME)"
+    log_message "Zabbix Traps: neuroboost.backup.status, neuroboost.cleanup.status"
+else
+    log_message "Zabbix Agent 2: Não configurado"
+fi
+if [ -n "$S3_ENDPOINT" ]; then
+    log_message "Backup S3: Configurado (Endpoint: $S3_ENDPOINT, Bucket: $NOME_INSTANCIA)"
+else
+    log_message "Backup S3: Não configurado (funcionará apenas localmente)"
+fi
 log_message "Data/Hora de conclusão: $(date)"
 log_message "=========================================="
 
@@ -3057,4 +3258,7 @@ msg "$AMARELO" "• docker-compose.rabbitmq.yml - RabbitMQ"
 msg "$AMARELO" "• docker-compose.n8n.yml - N8N"
 msg "$AMARELO" "• docker-compose.faq.yml - FAQ System"
 msg "$AMARELO" "• docker-compose.chatdigi.yml - ChatDigi System"
+if [ -n "$ZBX_SERVER_HOST" ]; then
+    msg "$AMARELO" "• docker-compose.zabbix.yml - Zabbix Agent 2"
+fi
 msg "$VERDE" "✅ Arquivos preservados para manutenção"
